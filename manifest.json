@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "tyrsolution.app-launcher",
+  "name": "App Launcher",
+  "version": "0.1.0",
+  "author": "Tyrsolution",
+  "license": "MIT",
+  "description": "Centered icon-grid app launcher: clickable app icons, live install/remove tracking, frecency ordering",
+  "kinds": [
+    "overlay",
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "overlay": "AppGrid.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "App Launcher",
+    "description": "Opens the app launcher",
+    "category": "Launcher",
+    "allowMultiple": false,
+    "defaultSection": "left"
+  }
+}

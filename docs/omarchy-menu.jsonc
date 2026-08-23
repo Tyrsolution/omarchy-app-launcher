@@ -1,0 +1,19 @@
+// App Launcher rows for the Omarchy menu.
+//
+// Copy the block below into ~/.config/omarchy/extensions/omarchy-menu.jsonc
+// (inside its top-level object). Dotted ids infer their parent, so these land
+// under Setup. The file hot-reloads on save.
+//
+// Icons are written as \u escapes on purpose: Nerd Font glyphs are private-use
+// characters that some editors and pipelines silently strip.
+//
+// If you renamed the plugin id, update the toggle action and the three bin/
+// paths below to match.
+
+  "setup.applauncher": {"icon":"\uf00a","label":"App Launcher","aliases":["applauncher","app launcher"],"description":"Add apps and coding agents to the app launcher"},
+  "setup.applauncher.open": {"icon":"\udb85\udcde","label":"Open Launcher","action":"omarchy-shell shell toggle tyrsolution.app-launcher '{}'"},
+  "setup.applauncher.addapp": {"icon":"\uf067","label":"Add Application","description":"Write a desktop entry for an app Omarchy doesn't know about","action":"omarchy-launch-floating-terminal-with-presentation '$HOME/.config/omarchy/plugins/tyrsolution.app-launcher/bin/app-launcher-add-app'"},
+  "setup.applauncher.addagent": {"icon":"\udb81\udea9","label":"Add Coding Agent","description":"Add a CLI agent that is not in Omarchy's roster","action":"omarchy-launch-floating-terminal-with-presentation '$HOME/.config/omarchy/plugins/tyrsolution.app-launcher/bin/app-launcher-add-agent'"},
+  "setup.applauncher.removeagent": {"icon":"\uf1f8","label":"Remove Coding Agent","when":"[[ -s $HOME/.config/omarchy/app-launcher/agents.json ]]","action":"omarchy-launch-floating-terminal-with-presentation '$HOME/.config/omarchy/plugins/tyrsolution.app-launcher/bin/app-launcher-remove-agent'"},
+  "setup.applauncher.editagents": {"icon":"\uf040","label":"Edit Agents File","description":"Hand-edit the custom agent roster","action":"omarchy-launch-editor $HOME/.config/omarchy/app-launcher/agents.json"},
+  "setup.applauncher.resetusage": {"icon":"\uf021","label":"Reset Usage Ranking","description":"Empty the Frequently used row","when":"[[ -f $HOME/.local/state/omarchy/app-launcher/usage.json ]]","action":"rm -f $HOME/.local/state/omarchy/app-launcher/usage.json"},

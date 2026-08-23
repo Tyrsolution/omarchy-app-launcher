@@ -1,0 +1,90 @@
+#!/bin/bash
+
+# Add an application to the App Launcher by writing a real desktop entry.
+#
+# Deliberately not a launcher-private list: a .desktop file in
+# ~/.local/share/applications is the system's own registry, so the app shows up
+# in this launcher, Omarchy's Apps menu, and anything else that reads XDG
+# entries. The launcher watches those directories, so it appears immediately.
+
+set -euo pipefail
+
+APPS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+
+fail() {
+  echo "app-launcher-add-app: $*" >&2
+  exit 1
+}
+
+command -v gum >/dev/null || fail "gum is required"
+
+echo
+gum style --bold "Add an application to the App Launcher"
+echo
+
+name=$(gum input --prompt "Name shown on the tile: " --placeholder "Antigravity") || fail "cancelled"
+[[ -n ${name//[[:space:]]/} ]] || fail "a name is required"
+
+exec_line=$(gum input --prompt "Command to run: " --placeholder "/opt/antigravity/antigravity %U") || fail "cancelled"
+[[ -n ${exec_line//[[:space:]]/} ]] || fail "a command is required"
+
+# shellcheck disable=SC2206
+argv=($exec_line)
+binary="${argv[0]}"
+if [[ $binary != /* ]] && ! command -v "$binary" >/dev/null 2>&1; then
+  echo
+  gum style --foreground 3 "⚠  '$binary' is not on PATH and is not an absolute path."
+  echo
+  gum confirm "Add it anyway?" || fail "aborted"
+elif [[ $binary == /* && ! -x $binary ]]; then
+  echo
+  gum style --foreground 3 "⚠  '$binary' is not an executable file."
+  echo
+  gum confirm "Add it anyway?" || fail "aborted"
+fi
+
+icon=$(gum input --prompt "Icon path or theme name (optional): " --placeholder "utilities-terminal") || fail "cancelled"
+comment=$(gum input --prompt "Short description (optional): ") || fail "cancelled"
+
+terminal=false
+gum confirm "Does it run in a terminal?" --default=false && terminal=true
+
+category=$(gum choose --header="Category" \
+  "Utility" "Development" "Network" "Graphics" "AudioVideo" "Office" "System" "Game") || fail "cancelled"
+
+slug=$(echo "$name" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-*//; s/-*$//')
+[[ -n $slug ]] || slug="custom-app"
+target="$APPS_DIR/$slug.desktop"
+
+if [[ -e $target ]]; then
+  echo
+  gum style --foreground 3 "⚠  $target already exists."
+  echo
+  gum confirm "Overwrite it?" || fail "aborted"
+fi
+
+echo
+gum style --bold "About to write:"
+printf '  %s\n  Exec=%s\n\n' "$target" "$exec_line"
+gum confirm "Create this entry?" || fail "aborted"
+
+mkdir -p "$APPS_DIR"
+{
+  echo "[Desktop Entry]"
+  echo "Type=Application"
+  echo "Name=$name"
+  [[ -n $comment ]] && echo "Comment=$comment"
+  echo "Exec=$exec_line"
+  [[ -n $icon ]] && echo "Icon=$icon"
+  echo "Terminal=$terminal"
+  echo "Categories=$category;"
+} >"$target"
+chmod 644 "$target"
+
+# Keeps the MIME/desktop cache honest for tools that read it; the launcher
+# itself watches the directory and does not need this.
+command -v update-desktop-database >/dev/null && update-desktop-database "$APPS_DIR" 2>/dev/null || true
+
+echo
+gum style --foreground 2 "✓ $name added — it appears in the launcher immediately."
+echo "  $target"

@@ -1,0 +1,97 @@
+#!/bin/bash
+
+# Add a coding agent to the App Launcher.
+#
+# Omarchy's own roster (claude, codex, gemini, …) is fixed, so anything else —
+# a CLI installed by hand, a company tool, a new agent Omarchy hasn't picked up
+# yet — goes in the launcher's own roster file.
+
+set -euo pipefail
+
+CONFIG="$HOME/.config/omarchy/app-launcher/agents.json"
+
+fail() {
+  echo "app-launcher-add-agent: $*" >&2
+  exit 1
+}
+
+command -v gum >/dev/null || fail "gum is required"
+command -v python3 >/dev/null || fail "python3 is required"
+
+echo
+gum style --bold "Add a coding agent to the App Launcher"
+echo
+
+command_line=$(gum input --prompt "Command to run (with flags): " --placeholder "agy --dangerously-skip-permissions") || fail "cancelled"
+[[ -n ${command_line//[[:space:]]/} ]] || fail "a command is required"
+
+# shellcheck disable=SC2206
+argv=($command_line)
+binary="${argv[0]}"
+
+if ! command -v "$binary" >/dev/null 2>&1; then
+  echo
+  gum style --foreground 3 "⚠  '$binary' is not on PATH — the tile will stay hidden until it is."
+  echo
+  gum confirm "Add it anyway?" || fail "aborted"
+fi
+
+default_name="${binary^}"
+name=$(gum input --prompt "Name shown on the tile: " --value "$default_name") || fail "cancelled"
+[[ -n ${name//[[:space:]]/} ]] || fail "a name is required"
+
+default_id=$(echo "$binary" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9._-')
+id=$(gum input --prompt "Internal id (names its usage-ranking key): " --value "$default_id") || fail "cancelled"
+[[ $id =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || fail "id must be letters, digits, dot, underscore or hyphen"
+
+monogram=$(gum input --prompt "Tile monogram (blank = derived from the name): " --placeholder "Ag") || fail "cancelled"
+icon=$(gum input --prompt "Icon path or theme name (optional): ") || fail "cancelled"
+
+echo
+gum style --bold "About to add:"
+printf '  %s\n  %s\n\n' "$name" "$command_line"
+gum confirm "Add this agent?" || fail "aborted"
+
+mkdir -p "$(dirname "$CONFIG")"
+[[ -f $CONFIG ]] || printf '{\n  "version": 1,\n  "agents": []\n}\n' >"$CONFIG"
+
+NEW_ID="$id" NEW_NAME="$name" NEW_MONOGRAM="$monogram" NEW_ICON="$icon" NEW_ARGV="$command_line" \
+  python3 - "$CONFIG" <<'PY'
+import json, os, shlex, sys
+
+path = sys.argv[1]
+try:
+    with open(path) as handle:
+        config = json.load(handle)
+except (OSError, ValueError):
+    config = {}
+if not isinstance(config, dict):
+    config = {}
+
+agents = config.get("agents")
+if not isinstance(agents, list):
+    agents = []
+
+entry = {
+    "id": os.environ["NEW_ID"],
+    "name": os.environ["NEW_NAME"],
+    "command": shlex.split(os.environ["NEW_ARGV"]),
+}
+if os.environ.get("NEW_MONOGRAM"):
+    entry["monogram"] = os.environ["NEW_MONOGRAM"]
+if os.environ.get("NEW_ICON"):
+    entry["icon"] = os.environ["NEW_ICON"]
+
+# Replacing by id keeps the file idempotent: re-adding an agent edits it.
+agents = [a for a in agents if not (isinstance(a, dict) and a.get("id") == entry["id"])]
+agents.append(entry)
+
+config["version"] = 1
+config["agents"] = agents
+with open(path, "w") as handle:
+    json.dump(config, handle, indent=2)
+    handle.write("\n")
+PY
+
+echo
+gum style --foreground 2 "✓ $name added — it appears in the launcher immediately."
