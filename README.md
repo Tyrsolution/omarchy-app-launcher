@@ -10,7 +10,7 @@ application updates the grid live, with no polling and no restart.
 Coding agents (Claude Code, Codex, Gemini, …) appear alongside applications and
 launch into a terminal.
 
-![The App Launcher: a Frequently used row above an alphabetical grid of applications and coding agents](docs/screenshot.png)
+![The App Launcher: a Frequently used row above an alphabetical grid of applications and coding agents](preview.png)
 
 **Requirements:** Omarchy 4.x with `omarchy-shell` (Quickshell 0.3+). The
 configuration wizards additionally need `gum` and `python3`, both of which ship
