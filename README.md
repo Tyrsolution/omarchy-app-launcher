@@ -74,8 +74,14 @@ it you simply lose the guided wizards under Setup.
 Click a tile to launch it. Hovering moves the selection. Right-click opens the
 context menu: an app offers its `.desktop` actions (Chrome's *New Incognito
 Window*, a terminal's *New Window*, …), *Reset usage ranking*, and *Remove from
-launcher…* (the stock `omarchy-remove-launcher-entry` flow); an agent offers
-*Set as default agent* instead. Clicking outside the card closes it.
+launcher…*; an agent offers *Set as default agent* instead.
+
+> **What *Remove from launcher…* does.** It hands off to the stock
+> `omarchy-remove-launcher-entry`, exactly as Omarchy's own Apps menu does. For a
+> desktop entry in your home directory it deletes that file. For an app owned by
+> a package it **uninstalls the package** — `sudo pacman -Rns <pkg>` in a visible
+> terminal, so you see the command and authenticate before anything happens.
+> Web apps and TUI entries go through Omarchy's own remove flows. Clicking outside the card closes it.
 
 ### Payload options
 
@@ -228,6 +234,49 @@ To reset by hand, **close the launcher first** — a live instance rewrites
 `usage.json` from memory when it closes.
 
 ---
+
+## Uninstalling
+
+```bash
+omarchy plugin remove tyrsolution.app-launcher --yes
+```
+
+That disables it over IPC (which drops the bar button out of `shell.json`) and
+deletes the plugin directory. Because the directory is a git checkout, it is
+deleted outright rather than backed up — the repo is upstream.
+
+It deliberately leaves four things behind, none of which break anything:
+
+| Left behind | Why, and how to clear it |
+|---|---|
+| `~/.local/state/omarchy/app-launcher/` | Your rankings and badge baseline, so reinstalling picks up where you left off. `rm -rf` it to forget. |
+| `~/.config/omarchy/app-launcher/agents.json` | Your custom agents, same reason. |
+| The `SUPER+A` binding | A plugin cannot edit your `bindings.lua`. Left in place it is a no-op that logs `summon: unknown plugin`. Delete the line to be tidy. |
+| The Setup menu rows | Same reason. Left in place they point at missing scripts; delete the `setup.applauncher.*` block. |
+
+Desktop entries written by *Add Application* are **not** removed: they are
+ordinary system entries that other launchers use, not plugin state. Remove them
+with `rm ~/.local/share/applications/<name>.desktop`.
+
+## What it can do to your system
+
+Worth knowing before installing any shell plugin, since plugins run unsandboxed
+inside `omarchy-shell`:
+
+- **At shell startup** only the bar button exists — a label with a click handler.
+  The overlay is built on first summon and torn down on close (`keepLoaded` is
+  deliberately unset).
+- **It writes** to its own two directories only: `~/.local/state/omarchy/app-launcher/`
+  and, through the wizards, `~/.config/omarchy/app-launcher/agents.json`. The
+  *Add Application* wizard also writes one desktop entry under
+  `~/.local/share/applications/`, which is the whole point of it.
+- **It runs** exactly four kinds of command: `mkdir -p` for its state directory,
+  `command -v` to probe which agents exist, `gtk-launch`/`uwsm-app` to launch an
+  app, and `omarchy-launch-tui` to open an agent. Every interpolated value is
+  shell-quoted.
+- **It never** reaches the network, elevates privileges on its own, or writes
+  outside the paths above. The one action that can escalate is *Remove from
+  launcher…*, described above, and it shows you the command first.
 
 ## Troubleshooting
 
