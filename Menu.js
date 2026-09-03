@@ -230,9 +230,14 @@ function rowFor(items, order, item, whenResults, checkedResults, subtextOverride
     : (leaf ? (item.description || breadcrumb(items, item.id))
             : (count === 1 ? "1 item" : count + " items"))
 
+  var parent = item.parent && item.parent !== "root" ? items[item.parent] : null
+
   return {
     id: rowId(item.id),
     menuId: item.id,
+    // The immediate parent's label, for surfaces too narrow for the full
+    // breadcrumb. `subtext` keeps the whole trail for those that fit.
+    parentLabel: parent ? labelFor(parent) : "",
     kind: leaf ? "command" : "folder",
     name: labelWithCheck(item, checkedResults),
     subtext: subtext,

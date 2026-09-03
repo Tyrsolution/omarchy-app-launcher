@@ -1316,6 +1316,21 @@ Item {
                   }
                 }
 
+                // Inside a folder, some tiles open and some run. Without this
+                // the two are indistinguishable — Development lists JavaScript
+                // (a folder) beside Go (a command) with nothing to tell them
+                // apart. Same marker and same anchoring rule as the strip.
+                Text {
+                  visible: tile.modelData.kind === "folder"
+                  anchors { left: parent.right; verticalCenter: parent.verticalCenter }
+                  anchors.leftMargin: Style.space(3)
+                  text: "›"
+                  color: root.accent
+                  opacity: 0.9
+                  font.family: root.fontFamily
+                  font.pixelSize: Math.round(root.iconSize * 0.38)
+                }
+
                 // "Just added": this .desktop file appeared since the last
                 // time the grid was closed.
                 Rectangle {
@@ -1452,14 +1467,17 @@ Item {
                 width: root.compactCellWidth - Style.spacing.md
                 anchors.horizontalCenter: parent.horizontalCenter
                 horizontalAlignment: Text.AlignHCenter
-                text: String(ctile.modelData.subtext || "")
+                // The folder the command sits in, not the whole trail. A tile
+                // this narrow turned "Setup › Defaults › Agent" into
+                // "…aults › Agent", which spends the width on an elision
+                // marker and half a word. The name above already carries the
+                // specifics; this only has to say where it lives.
+                text: String(ctile.modelData.parentLabel || ctile.modelData.subtext || "")
                 color: root.foreground
                 opacity: 0.4
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
-                // "…› Toggle" beats "Trigger › Tog…": the folder a command
-                // sits in says more than the branch it hangs off.
-                elide: Text.ElideLeft
+                elide: Text.ElideRight
                 maximumLineCount: 1
               }
             }

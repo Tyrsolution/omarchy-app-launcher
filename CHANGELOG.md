@@ -26,6 +26,16 @@ Changes are grouped under `Added`, `Changed`, `Fixed`, `Removed`, `Deprecated`, 
   never waits on it — the grid draws on the previous answers and takes the new
   ones when they land.
 
+### Changed
+
+- Folder tiles in the main grid carry the same `›` marker the System strip uses.
+  Inside a folder some tiles open and some run, and nothing distinguished them:
+  `Install` listed Development beside Windows identically.
+- Search results in the strip name the folder a command sits in rather than its
+  whole trail. At tile width "Setup › Defaults › Agent" rendered as
+  "…aults › Agent", spending the space on an elision marker; it now reads
+  "Agent".
+
 ## [0.2.0] - 2026-09-03
 
 ### Added
