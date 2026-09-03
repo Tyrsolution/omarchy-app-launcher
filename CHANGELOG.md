@@ -16,6 +16,15 @@ Changes are grouped under `Added`, `Changed`, `Fixed`, `Removed`, `Deprecated`, 
 
 ## [Unreleased]
 
+### Added
+
+- Two toggle rows above the search field. **Session** — Do Not Disturb, Stay
+  Awake, Nightlight, Screensaver, Window Gaps — acts on the machine; the second
+  row acts on the window behind the launcher and is labelled with it, since a
+  switch that changes something you cannot see should say what it is aimed at.
+  On is shown by a filled pill as well as colour, so it does not depend on hue.
+  Both rows are keyboard reachable and flipping one leaves the launcher open.
+
 ## [0.3.0] - 2026-09-03
 
 ### Added

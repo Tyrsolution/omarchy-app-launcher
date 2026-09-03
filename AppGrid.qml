@@ -416,9 +416,29 @@ Item {
   }
 
   function rowsFor(section) {
+    if (section === "session") return root.sessionToggles
+    if (section === "window") return root.windowToggles
     if (section === "frequent") return root.frequentRows
     if (section === "system") return root.systemRows
     return root.displayRows
+  }
+
+  // The grids top to bottom. Crossing between them is just a step along this
+  // list, which is why the five-way version replaced the hand-written pairs:
+  // every boundary used to be its own branch, and adding two rows would have
+  // meant four more.
+  readonly property var sectionOrder: ["session", "window", "frequent", "all", "system"]
+
+  // Only the ones that currently have anything in them — an empty section is
+  // skipped rather than trapping the caret.
+  function navigableSections() {
+    var out = []
+    for (var i = 0; i < root.sectionOrder.length; i++) {
+      var name = root.sectionOrder[i]
+      if (name === "frequent" && !root.showFrequent) continue
+      if (root.rowsFor(name).length > 0) out.push(name)
+    }
+    return out
   }
 
   // ------------------------------------------------------ menu navigation
@@ -524,8 +544,8 @@ Item {
     if (root.selectedIndex < 0) root.selectedIndex = 0
   }
 
-  // Arrow keys move within a section; up/down cross the divider, keeping the
-  // column so the caret lands where the eye expects it.
+  // Arrow keys move within a section; up/down cross between them, keeping the
+  // column so the caret lands where the eye expects.
   function moveSelection(dx, dy) {
     root.interacted = true
     var columns = Math.max(1, panel.columns)
@@ -538,37 +558,32 @@ Item {
     }
 
     var column = root.selectedIndex % columns
+    var sections = root.navigableSections()
+    var at = sections.indexOf(root.selectedSection)
+
     if (dy > 0) {
-      if (root.selectedSection === "frequent") {
-        if (root.displayRows.length === 0) return
-        root.select("all", Math.min(column, root.displayRows.length - 1))
+      // Still a row below inside this grid?
+      if (root.selectedIndex + columns < rows.length) {
+        root.selectedIndex += columns
         return
       }
-      // Off the bottom of the main grid, the pinned System strip is next.
-      if (root.selectedSection === "all" && root.selectedIndex + columns >= rows.length) {
-        if (root.systemRows.length === 0) return
-        root.select("system", Math.min(column, root.systemRows.length - 1))
-        return
-      }
-      root.selectedIndex = Math.min(rows.length - 1, root.selectedIndex + columns)
+      if (at < 0 || at + 1 >= sections.length) return
+      var next = sections[at + 1]
+      root.select(next, Math.min(column, root.rowsFor(next).length - 1))
       return
     }
 
-    // Leaving the strip upwards lands on the grid's *last* row, which is what
-    // sits directly above it — not its first.
-    if (root.selectedSection === "system" && root.selectedIndex < columns) {
-      if (root.displayRows.length === 0) return
-      var lastRowStart = Math.floor((root.displayRows.length - 1) / columns) * columns
-      root.select("all", Math.min(lastRowStart + column, root.displayRows.length - 1))
+    if (root.selectedIndex >= columns) {
+      root.selectedIndex -= columns
       return
     }
-
-    if (root.selectedSection === "all" && root.selectedIndex < columns) {
-      if (!root.showFrequent) return
-      root.select("frequent", Math.min(column, root.frequentRows.length - 1))
-      return
-    }
-    root.selectedIndex = Math.max(0, root.selectedIndex - columns)
+    if (at <= 0) return
+    // Land on the previous grid's *last* row, which is what sits directly
+    // above, not its first.
+    var prev = sections[at - 1]
+    var prevRows = root.rowsFor(prev)
+    var lastRowStart = Math.floor((prevRows.length - 1) / columns) * columns
+    root.select(prev, Math.min(lastRowStart + column, prevRows.length - 1))
   }
 
   // ------------------------------------------------------------ launching
@@ -618,13 +633,25 @@ Item {
   function runToggle(row) {
     if (!row || !row.action || row.available === false) return
     Util.execDetached(row.action)
+    // Re-read repeatedly rather than once. Most toggles write their flag and
+    // are done inside a frame, but omarchy-toggle-nightlight resends the
+    // temperature up to ten times at 0.2s intervals waiting for a freshly
+    // started hyprsunset to stop overriding it — a single check at 200ms would
+    // read the state it was about to leave.
+    toggleSettle.tries = 6
     toggleSettle.restart()
   }
 
   Timer {
     id: toggleSettle
-    interval: 220
-    onTriggered: root.readToggles()
+    property int tries: 0
+    interval: 320
+    repeat: true
+    onTriggered: {
+      root.readToggles()
+      toggleSettle.tries -= 1
+      if (toggleSettle.tries <= 0) toggleSettle.stop()
+    }
   }
 
   function readToggles() {
@@ -1562,6 +1589,8 @@ Item {
 
             readonly property bool on: ttile.modelData.on === true
             readonly property bool available: ttile.modelData.available !== false
+            readonly property string section: GridView.view ? GridView.view.section : "session"
+            readonly property bool selected: root.selectedSection === ttile.section && root.selectedIndex === ttile.index
 
             width: root.compactCellWidth
             height: root.compactCellAtRest
@@ -1571,7 +1600,10 @@ Item {
               anchors.fill: parent
               anchors.margins: Style.spacing.xs
               radius: Style.cornerRadius > 0 ? Style.cornerRadius : Style.space(6)
-              color: toggleHover.hovered && ttile.available ? Style.hoverFill : "transparent"
+              color: ttile.selected ? Style.selectedFill
+                   : (toggleHover.hovered && ttile.available ? Style.hoverFill : "transparent")
+              border.width: ttile.selected ? Math.max(1, Style.selectedBorderWidth) : 0
+              border.color: Style.selectedBorderColor
             }
 
             Column {
@@ -1615,12 +1647,22 @@ Item {
               }
             }
 
-            HoverHandler { id: toggleHover }
+            HoverHandler {
+              id: toggleHover
+              onHoveredChanged: {
+                if (!hovered || contextMenu.visible) return
+                root.interacted = true
+                root.select(ttile.section, ttile.index)
+              }
+            }
 
             MouseArea {
               anchors.fill: parent
               cursorShape: ttile.available ? Qt.PointingHandCursor : Qt.ArrowCursor
-              onClicked: root.runToggle(ttile.modelData)
+              onClicked: {
+                root.select(ttile.section, ttile.index)
+                root.runToggle(ttile.modelData)
+              }
             }
           }
         }
