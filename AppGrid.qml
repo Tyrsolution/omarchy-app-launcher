@@ -1343,8 +1343,12 @@ Item {
 
                 Text {
                   visible: ctile.modelData.kind === "folder"
-                  anchors { right: parent.right; bottom: parent.bottom }
-                  anchors.rightMargin: -Style.space(2)
+                  // Anchored off the icon's right edge rather than inset into
+                  // it: pinning the chevron's own right edge to the box put it
+                  // on top of the glyph, since a Nerd Font glyph fills its em.
+                  // A left anchor plus a gap cannot overlap however wide it is.
+                  anchors { left: parent.right; verticalCenter: parent.verticalCenter }
+                  anchors.leftMargin: Style.space(4)
                   text: "›"
                   color: root.accent
                   opacity: 0.9
