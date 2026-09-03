@@ -79,9 +79,10 @@ Item {
   // The strip is contextual: folders while browsing the launcher normally,
   // matching commands while a search is narrowing things down. Same pinned
   // place either way, so "system things live down there" stays true.
+  readonly property var systemRestRows: Menu.sectionRows(root.menuItems, root.menuOrder, root.whenResults, root.checkedResults)
   readonly property var systemRows: root.searching
     ? Menu.sortMatches(root.menuLeaves, root.filterText)
-    : Menu.sectionRows(root.menuItems, root.menuOrder, root.whenResults, root.checkedResults)
+    : root.systemRestRows
 
   // What the main grid shows: applications, or the folder being browsed.
   readonly property var displayRows: root.browsing
@@ -128,6 +129,7 @@ Item {
   readonly property int footerHeight: Style.font.caption + Style.spacing.md * 2
   readonly property int sectionLabelHeight: Style.font.caption + Style.spacing.md * 2
   readonly property int scrollBarWidth: Style.space(4)
+  readonly property int ruleHeight: Math.max(1, Style.space(1))
 
   // The System strip is navigation, not content, so its tiles are smaller than
   // an app tile: it costs one short row instead of a full grid row. The width
@@ -135,8 +137,43 @@ Item {
   // column-preserving up/down lands where the eye expects.
   readonly property int compactIconSize: Math.round(root.iconSize * 0.58)
   readonly property int compactCellWidth: root.cellWidth
-  readonly property int compactCellHeight: root.compactIconSize + Style.space(34)
+  readonly property int compactCellHeight: root.compactCellAtRest
     + (root.searching ? Style.font.caption + Style.space(3) : 0)
+  readonly property int compactCellAtRest: root.compactIconSize + Style.space(34)
+
+  // The card sizes itself to a whole number of application rows. The grid snaps
+  // to whole rows so the last one is never sliced, which means any height the
+  // card has beyond an exact multiple shows up as dead space above the System
+  // divider — 63px of it before this, enough to read as "the grid ran out".
+  //
+  // The chrome is summed explicitly rather than measured as `card.height -
+  // allArea.height`, because the card's height is derived from it and reading it
+  // back would be a binding loop. Every term below is independent of the card's
+  // height; if a row or margin is added to the layout it has to be added here
+  // too, or the dead space quietly returns.
+  //
+  // Measured "at rest" — as if not searching — so that typing cannot resize the
+  // card under the pointer. A query hides the frequent row, which frees height
+  // the grid takes as extra rows; whatever is left over then is a smaller gap in
+  // a view that is usually full anyway.
+  readonly property bool frequentAtRest: root.frequentPool.length > 0
+  readonly property bool systemAtRest: root.systemRestRows.length > 0
+  readonly property int stripRowsAtRest: Math.min(2, Math.max(1,
+    Math.ceil(root.systemRestRows.length / Math.max(1, panel.columns))))
+
+  readonly property int cardChrome:
+      card.contentTopInset + card.contentBottomInset
+    + root.headerHeight + root.ruleHeight
+    + (root.frequentAtRest ? root.sectionLabelHeight + root.cellHeight + Style.spacing.sm + root.ruleHeight : 0)
+    + (root.frequentAtRest ? root.sectionLabelHeight : 0)
+    + Style.spacing.md + Style.spacing.xs
+    + (root.systemAtRest ? Style.spacing.xs + root.ruleHeight + root.sectionLabelHeight
+                           + root.stripRowsAtRest * root.compactCellAtRest : 0)
+    + root.footerHeight
+
+  readonly property int cardMaxHeight: Math.min(Style.space(760), panel.height - Style.gapsOut * 2)
+  readonly property int cardGridRows: Math.max(1,
+    Math.floor((root.cardMaxHeight - root.cardChrome) / root.cellHeight))
 
   // ------------------------------------------------------------ lifecycle
 
@@ -828,7 +865,7 @@ Item {
     BorderSurface {
       id: card
       width: panel.gridWidth + root.contentMargin * 2 + root.scrollBarWidth + Style.spacing.md
-      height: Math.min(Style.space(620), panel.height - Style.gapsOut * 2)
+      height: Math.min(root.cardMaxHeight, root.cardChrome + root.cardGridRows * root.cellHeight)
       radius: root.cornerRadius
       anchors.centerIn: parent
       color: root.background

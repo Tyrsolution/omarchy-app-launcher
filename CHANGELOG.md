@@ -28,6 +28,11 @@ Changes are grouped under `Added`, `Changed`, `Fixed`, `Removed`, `Deprecated`, 
 
 ### Changed
 
+- The card sizes itself to a whole number of application rows. The grid snaps to
+  whole rows so the last is never sliced, and the fixed card height left 63px
+  over — a half-row of dead space above the System divider that read as the grid
+  running out. Removing it also recovers the application row the System strip had
+  cost, so the grid is back to the density it had before the section existed.
 - Folder tiles in the main grid carry the same `›` marker the System strip uses.
   Inside a folder some tiles open and some run, and nothing distinguished them:
   `Install` listed Development beside Windows identically.
