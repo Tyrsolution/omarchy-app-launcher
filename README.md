@@ -10,7 +10,14 @@ application updates the grid live, with no polling and no restart.
 Coding agents (Claude Code, Codex, Gemini, …) appear alongside applications and
 launch into a terminal.
 
-![The App Launcher: a Frequently used row above an alphabetical grid of applications and coding agents](preview.png)
+A **System** section pinned under the applications browses Omarchy's own menu as
+folders — themes, monitors, packages, power — so the launcher answers "change my
+theme" as readily as "open Chrome", by pointing rather than by remembering where
+in a menu tree it lives. Rows describe the machine they are on: options your
+hardware or setup cannot support are hidden, and the default you are already
+running carries a ✓.
+
+![The App Launcher: a Frequently used row, an alphabetical grid of applications and coding agents, and a System strip of menu folders pinned below](preview.png)
 
 **Requirements:** Omarchy 4.x with `omarchy-shell` (Quickshell 0.3+). The
 configuration wizards additionally need `gum` and `python3`, both of which ship
@@ -64,10 +71,10 @@ it you simply lose the guided wizards under Setup.
 | any character | filter as you type (name, generic name, comment, keywords, acronym) |
 | `↑` `↓` `←` `→` | move the selection; up/down crosses the section divider, keeping your column |
 | `Home` / `End` | first tile / last tile |
-| `Enter` | launch the selection |
+| `Enter` | launch the selection — or open it, on a System folder |
 | `Menu` | context menu for the selection |
-| `Esc` | clear the filter, or close if the filter is empty |
-| `Backspace` | edit the filter |
+| `Esc` | unwind one step: clear the filter, then leave the folder, then close |
+| `Backspace` | edit the filter, or leave the folder when the filter is empty |
 
 ### Mouse
 
@@ -75,6 +82,12 @@ Click a tile to launch it. Hovering moves the selection. Right-click opens the
 context menu: an app offers its `.desktop` actions (Chrome's *New Incognito
 Window*, a terminal's *New Window*, …), *Reset usage ranking*, and *Remove from
 launcher…*; an agent offers *Set as default agent* instead.
+
+A System tile marked `›` is a folder: clicking it replaces the grid with its
+contents and puts a **‹ Back** target and a breadcrumb where *All apps* normally
+sits. Tiles without the marker run immediately. The System strip stays put while
+you browse, so any other branch is one click away — nothing here needs the
+keyboard.
 
 > **What *Remove from launcher…* does.** It hands off to the stock
 > `omarchy-remove-launcher-entry`, exactly as Omarchy's own Apps menu does. For a
@@ -107,6 +120,21 @@ never sliced in half.
 
 Typing collapses both into a single relevance-ranked grid; matching agents lead,
 since typing three letters of an agent's name should not put it three rows down.
+
+**System** — Omarchy's menu, flattened into folders and pinned below the grid so
+it never has to be scrolled to. Nine tiles (Learn, Trigger, Style, Setup,
+Install, Remove, Update, About, Power) drill in place; a `›` marks the ones that
+open rather than run. Typing collapses the tree instead of filtering one folder,
+because search beats navigation once you know the word — the strip then lists
+ranked matches from every leaf, labelled with the folder each came from. Rows
+run the same command the menu would, and earn frecency like applications, so one
+you use daily can climb into *Frequently used*.
+
+Menu rows carry conditions, and they are honoured: `Hibernate` is absent where
+it is unavailable, *Stop Screenrecording* only while recording, and a folder
+whose every entry is hidden disappears rather than opening onto nothing. The
+defaults you are on — agent, browser, terminal, editor — carry a ✓. These are
+answered in one batched shell pass per summon, so opening never waits on them.
 
 **Badges.** A tile whose desktop entry appeared since the last time you closed
 the launcher carries an accent dot, and the footer counts them. Closing the
@@ -222,13 +250,15 @@ Two files, both safe to delete — deleting `seen.json` re-baselines the badges,
 deleting `usage.json` empties *Frequently used*:
 
 ```
-~/.local/state/omarchy/app-launcher/usage.json   # frecency scores (agents keyed "agent:<id>")
+~/.local/state/omarchy/app-launcher/usage.json   # frecency scores (agents "agent:<id>", menu rows "cmd:<menu id>")
 ~/.local/state/omarchy/app-launcher/seen.json    # desktop ids seen at last close
 ```
 
 Both survive reboots and logout/login: scores are written on every launch, not on
 exit, and atomically (temp file + rename), so an interrupted write cannot corrupt
-them. Scores for apps that no longer exist are pruned when the launcher closes.
+them. Scores for apps that no longer exist are pruned when the launcher closes;
+menu rows count as live for that purpose, and if the menu failed to load they are
+kept rather than pruned, so a bad read cannot cost you their ranking.
 
 To reset by hand, **close the launcher first** — a live instance rewrites
 `usage.json` from memory when it closes.
@@ -270,13 +300,27 @@ inside `omarchy-shell`:
   and, through the wizards, `~/.config/omarchy/app-launcher/agents.json`. The
   *Add Application* wizard also writes one desktop entry under
   `~/.local/share/applications/`, which is the whole point of it.
-- **It runs** exactly four kinds of command: `mkdir -p` for its state directory,
-  `command -v` to probe which agents exist, `gtk-launch`/`uwsm-app` to launch an
-  app, and `omarchy-launch-tui` to open an agent. Every interpolated value is
-  shell-quoted.
-- **It never** reaches the network, elevates privileges on its own, or writes
-  outside the paths above. The one action that can escalate is *Remove from
-  launcher…*, described above, and it shows you the command first.
+- **It reads** the two menu files — `$OMARCHY_PATH/default/omarchy/omarchy-menu.jsonc`
+  and `~/.config/omarchy/extensions/omarchy-menu.jsonc` — to build the System
+  section. Read-only; it never writes either.
+- **It runs** `mkdir -p` for its state directory, `command -v` to probe which
+  agents exist, `gtk-launch`/`uwsm-app` to launch an app, and
+  `omarchy-launch-tui` to open an agent. Every interpolated value is
+  shell-quoted. For the System section it additionally runs two things, both
+  bash: one batched script per summon that evaluates the menu's own
+  `when:`/`checked:` conditions, and — only when you pick a System row — that
+  row's `action:` verbatim.
+- **The System section is as powerful as the menu it mirrors**, and no more. Its
+  commands are the ones already in your menu files, run the same way
+  `omarchy menu` runs them, so picking *Shutdown* shuts down and picking a
+  *Remove* row removes a package. Nothing is invented here and nothing is
+  elevated that the menu would not elevate; a row that needs root prompts for it
+  the same way. If you would not want a command one click away, remove it from
+  `omarchy-menu.jsonc` and it leaves the launcher too.
+- **It never** reaches the network or writes outside the paths above. It does not
+  elevate privileges on its own — the paths that can escalate are *Remove from
+  launcher…*, described above, and whichever System rows your menu defines, both
+  of which surface the command first.
 
 ## Troubleshooting
 
@@ -304,6 +348,7 @@ manifest.json   plugin id, kinds (overlay + bar-widget), entry points
 AppGrid.qml     the overlay: state, IO, layout, keyboard, context menu
 Usage.js        frecency arithmetic and state (de)serialization
 Agents.js       the coding-agent roster, launch argv, custom roster parsing
+Menu.js         the Omarchy menu: JSONC parsing, folder tree, guard batching
 BarWidget.qml   the bar button
 bin/            the gum wizards the Setup menu rows call
 ```
