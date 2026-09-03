@@ -4,8 +4,12 @@ All notable changes to App Launcher are recorded here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The
-version below tracks `version` in [`manifest.json`](manifest.json) — bump the two
-together, since that is the number `omarchy plugin list` reports to users.
+version below tracks `version` in [`manifest.json`](manifest.json) and the `v*` git
+tag — bump all three together. Omarchy itself never shows that number: `omarchy
+plugin validate` requires the field to exist but ignores its value, and `omarchy
+plugin list` reports no version in either its table or `--json`. It is for people
+reading the repo and for matching a checkout to a release, which is what makes the
+tag the part that actually reaches anyone.
 
 Changes are grouped under `Added`, `Changed`, `Fixed`, `Removed`, `Deprecated`, and
 `Security`. Merged pull requests are credited inline with their number and author.
