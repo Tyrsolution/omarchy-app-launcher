@@ -11,13 +11,12 @@ BarWidget {
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
-  WidgetButton {
+  BarIconButton {
     id: button
     anchors.fill: parent
     bar: root.bar
     text: ""
     tooltipText: "App Launcher"
-    horizontalMargin: 7.5
     onPressed: function(mouseButton) {
       if (!root.bar) return
       root.bar.run("omarchy-shell shell toggle tyrsolution.app-launcher '{}'")
