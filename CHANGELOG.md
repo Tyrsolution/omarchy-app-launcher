@@ -12,6 +12,8 @@ Changes are grouped under `Added`, `Changed`, `Fixed`, `Removed`, `Deprecated`, 
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-03
+
 ### Added
 
 - A **System** section, pinned below the applications, that browses Omarchy's own
@@ -61,5 +63,6 @@ Initial release.
 - Setup wizards for the keybinding and menu rows, plus documentation covering install,
   uninstall, the safety surface, and what "Remove from launcher" does.
 
-[Unreleased]: https://github.com/Tyrsolution/omarchy-app-launcher/compare/ebf72cb...HEAD
-[0.1.0]: https://github.com/Tyrsolution/omarchy-app-launcher/tree/ebf72cb
+[Unreleased]: https://github.com/Tyrsolution/omarchy-app-launcher/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Tyrsolution/omarchy-app-launcher/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/Tyrsolution/omarchy-app-launcher/releases/tag/v0.1.0
