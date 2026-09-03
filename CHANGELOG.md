@@ -12,6 +12,24 @@ Changes are grouped under `Added`, `Changed`, `Fixed`, `Removed`, `Deprecated`, 
 
 ## [Unreleased]
 
+### Added
+
+- A **System** section, pinned below the applications, that browses Omarchy's own
+  menu as folders. Nine tiles (Learn, Trigger, Style, Setup, Install, Remove,
+  Update, About, Power) drill into their submenus in place, with a breadcrumb and
+  a clickable Back target; leaves run the same shell command the menu would run.
+  It is pinned rather than scrolled in with the apps because reaching it by
+  scrolling past every application would be worse than the menu it complements.
+- Menu commands are searchable. Typing turns the strip into ranked results drawn
+  from all 269 leaves, flattened with their breadcrumb — folders are for
+  browsing, search is for finding — and the selection follows the results, so a
+  query matching no applications still runs on Enter.
+- Menu commands earn frecency like applications, so one you run often can climb
+  into the Frequently used row.
+- `Menu.js`: parses the shipped menu and the user's `omarchy-menu.jsonc`
+  extensions, merges them, and flattens the tree. Both files are watched, so a
+  row added to the menu appears in the launcher without a shell restart.
+
 ### Fixed
 
 - The bar button uses `BarIconButton` rather than `WidgetButton`, so the launcher glyph

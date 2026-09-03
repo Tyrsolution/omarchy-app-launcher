@@ -6,6 +6,7 @@ import qs.Commons
 import qs.Ui
 import "Usage.js" as Usage
 import "Agents.js" as Agents
+import "Menu.js" as Menu
 
 // A centered launcher: a "Frequently used" row on top, then every installed
 // application and coding agent below, alphabetical and scrollable.
@@ -48,7 +49,37 @@ Item {
     ? []
     : root.frequentPool.slice(0, Math.max(1, panel.columns))
 
-  // Selection spans two grids, so it needs a section as well as an index.
+  // --------------------------------------------------------- system menu
+
+  // Omarchy's own menu, browsed as folders in a strip pinned under the apps.
+  // It is read straight off disk rather than asked of the menu plugin: there is
+  // no IPC for "give me your model", and both files are small and watched.
+  property var menuItems: ({})
+  property var menuOrder: []
+  property var menuDefaults: []
+  property var menuCustom: []
+
+  // "" while the strip shows its top-level folders; a menu id once drilled in.
+  property string browsePath: ""
+  readonly property bool browsing: root.browsePath.length > 0
+
+  // Flattened once per menu change, not per keystroke — 269 leaves is cheap to
+  // filter but not to re-walk on every character.
+  readonly property var menuLeaves: Menu.leafRows(root.menuItems, root.menuOrder, null)
+
+  // The strip is contextual: folders while browsing the launcher normally,
+  // matching commands while a search is narrowing things down. Same pinned
+  // place either way, so "system things live down there" stays true.
+  readonly property var systemRows: root.searching
+    ? Menu.sortMatches(root.menuLeaves, root.filterText)
+    : Menu.sectionRows(root.menuItems, root.menuOrder, null)
+
+  // What the main grid shows: applications, or the folder being browsed.
+  readonly property var displayRows: root.browsing
+    ? Menu.browseRows(root.menuItems, root.menuOrder, root.browsePath, null)
+    : root.allRows
+
+  // Selection spans several grids, so it needs a section as well as an index.
   property string selectedSection: "all"
   property int selectedIndex: 0
   // Usage state loads from disk after the window is up, so the frequent row can
@@ -89,6 +120,15 @@ Item {
   readonly property int sectionLabelHeight: Style.font.caption + Style.spacing.md * 2
   readonly property int scrollBarWidth: Style.space(4)
 
+  // The System strip is navigation, not content, so its tiles are smaller than
+  // an app tile: it costs one short row instead of a full grid row. The width
+  // stays in step with the grid above so the columns line up and the keyboard's
+  // column-preserving up/down lands where the eye expects.
+  readonly property int compactIconSize: Math.round(root.iconSize * 0.58)
+  readonly property int compactCellWidth: root.cellWidth
+  readonly property int compactCellHeight: root.compactIconSize + Style.space(34)
+    + (root.searching ? Style.font.caption + Style.space(3) : 0)
+
   // ------------------------------------------------------------ lifecycle
 
   function open(payloadJson) {
@@ -98,6 +138,9 @@ Item {
     if (Number(payload.iconScale) > 0) root.iconScale = Number(payload.iconScale)
 
     root.filterText = String(payload.query || "")
+    // A summon always starts at the top: a folder left open from last time is
+    // not where anyone expects to land.
+    root.browsePath = ""
     contextMenu.hide()
     root.opened = true
 
@@ -192,7 +235,22 @@ Item {
     }
 
     root.allRows = out
-    root.frequentPool = root.pickFrequent(out)
+
+    // Menu commands compete for the Frequently used row on the same terms as
+    // apps: a Screenshot run every day belongs up there. Only ones that have
+    // actually been run are considered, so the row does not fill with verbs.
+    var pool = out.slice()
+    for (var c = 0; c < root.menuLeaves.length; c++) {
+      var leaf = root.menuLeaves[c]
+      var leafScore = Usage.effectiveScore(root.usage[leaf.id], now)
+      if (leafScore <= 0) continue
+      var scored = ({})
+      for (var key in leaf) scored[key] = leaf[key]
+      scored.score = leafScore
+      pool.push(scored)
+    }
+
+    root.frequentPool = root.pickFrequent(pool)
     root.clampSelection()
   }
 
@@ -281,13 +339,59 @@ Item {
 
   function setFilter(next) {
     root.filterText = next
+    // Folders are for browsing, search is for finding: a query collapses the
+    // tree and matches across every leaf rather than filtering one folder.
+    if (root.filterText && root.browsing) root.browsePath = ""
     root.rebuild()
     root.resetSelection()
     allGrid.positionViewAtBeginning()
   }
 
   function rowsFor(section) {
-    return section === "frequent" ? root.frequentRows : root.allRows
+    if (section === "frequent") return root.frequentRows
+    if (section === "system") return root.systemRows
+    return root.displayRows
+  }
+
+  // ------------------------------------------------------ menu navigation
+
+  function enterFolder(menuId) {
+    if (!menuId) return
+    root.browsePath = menuId
+    root.select("all", 0)
+    allGrid.positionViewAtBeginning()
+  }
+
+  // Up one level, and out of browse mode entirely at the top.
+  function goBack() {
+    if (!root.browsing) return
+    var entry = root.menuItems[root.browsePath]
+    var parent = entry ? entry.parent : "root"
+    root.browsePath = (!parent || parent === "root") ? "" : parent
+    root.select("all", 0)
+    allGrid.positionViewAtBeginning()
+  }
+
+  function leaveBrowse() {
+    root.browsePath = ""
+    root.select("all", 0)
+  }
+
+  // "Install › Development" for the folder in view, shown where the "All apps"
+  // label normally sits.
+  function browseTitle() {
+    if (!root.browsing) return ""
+    var trail = Menu.breadcrumb(root.menuItems, root.browsePath)
+    var name = Menu.labelFor(root.menuItems[root.browsePath])
+    return trail ? trail + " › " + name : name
+  }
+
+  function reloadMenu() {
+    var merged = Menu.merge(root.menuDefaults, root.menuCustom)
+    root.menuItems = merged.items
+    root.menuOrder = merged.order
+    // A menu that shrank under us could leave the browsed folder gone.
+    if (root.browsing && !root.menuItems[root.browsePath]) root.leaveBrowse()
   }
 
   function rowAt(section, index) {
@@ -306,7 +410,15 @@ Item {
   }
 
   function resetSelection() {
-    root.select(root.showFrequent ? "frequent" : "all", 0)
+    if (root.showFrequent) { root.select("frequent", 0); return }
+    // A query can match commands and no applications at all. Leaving the caret
+    // on an empty grid would mean Enter did nothing while a result sat visible
+    // in the strip, so the selection follows the results.
+    if (root.displayRows.length === 0 && root.systemRows.length > 0) {
+      root.select("system", 0)
+      return
+    }
+    root.select("all", 0)
   }
 
   function clampSelection() {
@@ -332,11 +444,26 @@ Item {
     var column = root.selectedIndex % columns
     if (dy > 0) {
       if (root.selectedSection === "frequent") {
-        if (root.allRows.length === 0) return
-        root.select("all", Math.min(column, root.allRows.length - 1))
+        if (root.displayRows.length === 0) return
+        root.select("all", Math.min(column, root.displayRows.length - 1))
+        return
+      }
+      // Off the bottom of the main grid, the pinned System strip is next.
+      if (root.selectedSection === "all" && root.selectedIndex + columns >= rows.length) {
+        if (root.systemRows.length === 0) return
+        root.select("system", Math.min(column, root.systemRows.length - 1))
         return
       }
       root.selectedIndex = Math.min(rows.length - 1, root.selectedIndex + columns)
+      return
+    }
+
+    // Leaving the strip upwards lands on the grid's *last* row, which is what
+    // sits directly above it — not its first.
+    if (root.selectedSection === "system" && root.selectedIndex < columns) {
+      if (root.displayRows.length === 0) return
+      var lastRowStart = Math.floor((root.displayRows.length - 1) / columns) * columns
+      root.select("all", Math.min(lastRowStart + column, root.displayRows.length - 1))
       return
     }
 
@@ -352,6 +479,8 @@ Item {
 
   function launch(row) {
     if (!row) return
+    if (row.kind === "folder") { root.enterFolder(row.menuId); return }
+    if (row.kind === "command") { root.runCommand(row); return }
     if (row.kind === "agent") { root.launchAgent(row); return }
     root.usage = Usage.record(root.usage, row.id, Date.now())
     root.persistUsage()
@@ -372,6 +501,18 @@ Item {
     var quoted = []
     for (var i = 0; i < row.argv.length; i++) quoted.push(Util.shellQuote(String(row.argv[i])))
     Util.execDetached('[[ -d "$HOME/Work" ]] && cd "$HOME/Work"; exec omarchy-launch-tui --app-id=org.omarchy.agent ' + quoted.join(" "))
+  }
+
+  // Menu rows are plain shell commands, run exactly the way the menu plugin
+  // runs them (Menu.qml runAction) so a row behaves the same in both places.
+  // They earn frecency like anything else: "Screenshot" should be able to climb
+  // into the Frequently used row.
+  function runCommand(row) {
+    if (!row || !row.action) return
+    root.usage = Usage.record(root.usage, row.id, Date.now())
+    root.persistUsage()
+    root.dismiss()
+    Util.execDetached(row.action)
   }
 
   // Sets the default and launches it — that is what the omarchy command does.
@@ -434,13 +575,30 @@ Item {
     root.newIds = next
   }
 
+  // Ids whose frecency is worth keeping. Deliberately wider than liveIdMap():
+  // that one is the "just added" badge domain, and menu commands do not belong
+  // in it — they are never badged, and folding 269 of them in would report the
+  // whole menu as new the first time this runs. But their scores still have to
+  // survive the prune below, or every command's ranking would die on close.
+  function scorableIdMap() {
+    var out = root.liveIdMap()
+    if (root.menuLeaves.length > 0) {
+      for (var i = 0; i < root.menuLeaves.length; i++) out[root.menuLeaves[i].id] = true
+      return out
+    }
+    // The menu has not loaded yet, or failed to. Keep the command scores that
+    // are already on disk rather than pruning them away on a transient error.
+    for (var id in root.usage) if (Menu.menuIdOf(id)) out[id] = true
+    return out
+  }
+
   function markAllSeen() {
     var live = root.liveIdMap()
     root.seenIds = live
     root.newIds = ({})
     seenFile.setText(Usage.serializeSeen(live))
     // An app that is gone has no score worth keeping.
-    var pruned = Usage.prune(root.usage, live)
+    var pruned = Usage.prune(root.usage, root.scorableIdMap())
     if (JSON.stringify(pruned) !== JSON.stringify(root.usage)) {
       root.usage = pruned
       root.persistUsage()
@@ -490,6 +648,27 @@ Item {
       root.customAgents = []
       root.rebuild()
     }
+  }
+
+  // The shipped menu, and the user's extensions on top of it. Both watched, so
+  // adding a row to omarchy-menu.jsonc shows up in the launcher the same way it
+  // shows up in the menu — without a shell restart.
+  FileView {
+    path: root.omarchyPath + "/default/omarchy/omarchy-menu.jsonc"
+    watchChanges: true
+    printErrors: false
+    onLoaded: { root.menuDefaults = Menu.parse(text()); root.reloadMenu() }
+    onFileChanged: reload()
+    onLoadFailed: { root.menuDefaults = []; root.reloadMenu() }
+  }
+
+  FileView {
+    path: Quickshell.env("HOME") + "/.config/omarchy/extensions/omarchy-menu.jsonc"
+    watchChanges: true
+    printErrors: false
+    onLoaded: { root.menuCustom = Menu.parse(text()); root.reloadMenu() }
+    onFileChanged: reload()
+    onLoadFailed: { root.menuCustom = []; root.reloadMenu() }
   }
 
   FileView {
@@ -600,8 +779,13 @@ Item {
           }
 
           if (event.key === Qt.Key_Escape) {
+            // Unwind one level at a time: query, then folder, then close.
             if (root.filterText) root.setFilter("")
+            else if (root.browsing) root.goBack()
             else root.dismiss()
+            event.accepted = true
+          } else if (event.key === Qt.Key_Backspace && !root.filterText && root.browsing) {
+            root.goBack()
             event.accepted = true
           } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
             root.launchSelected()
@@ -617,7 +801,7 @@ Item {
           } else if (event.key === Qt.Key_Home) {
             root.resetSelection(); event.accepted = true
           } else if (event.key === Qt.Key_End) {
-            root.select("all", Math.max(0, root.allRows.length - 1)); event.accepted = true
+            root.select("all", Math.max(0, root.displayRows.length - 1)); event.accepted = true
           } else if (event.key === Qt.Key_Menu) {
             contextMenu.showForSelection(); event.accepted = true
           } else if (Util.editsFilter(event, root.filterText)) {
@@ -678,6 +862,11 @@ Item {
             id: counter
             anchors { right: parent.right; verticalCenter: parent.verticalCenter }
             text: {
+              // While browsing, the count that matters is the folder in view.
+              if (root.browsing) {
+                var n = root.displayRows.length
+                return n + (n === 1 ? " item" : " items")
+              }
               var agents = 0
               for (var i = 0; i < root.allRows.length; i++)
                 if (root.allRows[i].kind === "agent") agents++
@@ -744,24 +933,56 @@ Item {
 
         // ------------------------------------------------------- all apps
 
-        Text {
+        // Browsing a folder turns this label into a breadcrumb with a Back
+        // target beside it. Escape and Backspace do the same job, but neither
+        // is discoverable with a mouse, and this section exists for the mouse.
+        Item {
           id: allLabel
-          visible: root.showFrequent
-          anchors { top: sectionRule.bottom; left: parent.left }
+          visible: root.showFrequent || root.browsing
+          anchors { top: sectionRule.bottom; left: parent.left; right: parent.right }
           height: visible ? root.sectionLabelHeight : 0
-          verticalAlignment: Text.AlignVCenter
-          text: "All apps"
-          color: root.foreground
-          opacity: 0.45
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
+
+          Text {
+            id: backButton
+            visible: root.browsing
+            anchors { left: parent.left; verticalCenter: parent.verticalCenter }
+            text: "‹ Back"
+            color: root.accent
+            opacity: backArea.containsMouse ? 1 : 0.8
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+
+            MouseArea {
+              id: backArea
+              anchors.fill: parent
+              anchors.margins: -Style.spacing.sm
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.goBack()
+            }
+          }
+
+          Text {
+            anchors {
+              left: backButton.visible ? backButton.right : parent.left
+              leftMargin: backButton.visible ? Style.spacing.md : 0
+              right: parent.right
+              verticalCenter: parent.verticalCenter
+            }
+            text: root.browsing ? root.browseTitle() : "All apps"
+            color: root.foreground
+            opacity: 0.45
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            elide: Text.ElideRight
+          }
         }
 
         Item {
           id: allArea
           anchors {
             top: allLabel.visible ? allLabel.bottom : headerRule.bottom
-            bottom: footer.top
+            bottom: systemRule.top
             left: parent.left
             right: parent.right
             topMargin: Style.spacing.md
@@ -781,7 +1002,7 @@ Item {
             clip: true
             cellWidth: root.cellWidth
             cellHeight: root.cellHeight
-            model: root.allRows
+            model: root.displayRows
             boundsBehavior: Flickable.StopAtBounds
             cacheBuffer: root.cellHeight * 4
             delegate: tileComponent
@@ -853,8 +1074,10 @@ Item {
 
         Text {
           anchors.centerIn: allArea
-          visible: root.allRows.length === 0
-          text: root.filterText ? "No apps match “" + root.filterText + "”" : "No applications found"
+          visible: root.displayRows.length === 0
+          text: root.browsing
+            ? "Nothing here"
+            : (root.filterText ? "No apps match “" + root.filterText + "”" : "No applications found")
           color: root.foreground
           opacity: 0.5
           font.family: root.fontFamily
@@ -863,6 +1086,60 @@ Item {
 
         // ---------------------------------------------------------- footer
 
+        // --------------------------------------------------- system strip
+
+        // Pinned rather than scrolled in with the apps: reaching it by
+        // scrolling past every application would be worse than the menu this
+        // is meant to replace. Anchored bottom-up so it collapses to nothing
+        // when there is no menu to show.
+
+        Rectangle {
+          id: systemRule
+          visible: root.systemRows.length > 0
+          anchors { bottom: systemLabel.top; left: parent.left; right: parent.right }
+          anchors.bottomMargin: visible ? Style.spacing.xs : 0
+          height: visible ? Math.max(1, Style.space(1)) : 0
+          color: root.foreground
+          opacity: 0.12
+        }
+
+        Text {
+          id: systemLabel
+          visible: systemRule.visible
+          anchors { bottom: systemGrid.top; left: parent.left }
+          height: visible ? root.sectionLabelHeight : 0
+          verticalAlignment: Text.AlignVCenter
+          text: root.searching
+            ? "System · " + root.systemRows.length + (root.systemRows.length === 1 ? " match" : " matches")
+            : "System"
+          color: root.foreground
+          opacity: 0.45
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+
+        GridView {
+          id: systemGrid
+          visible: systemRule.visible
+          anchors { bottom: footer.top; horizontalCenter: parent.horizontalCenter }
+          width: panel.gridWidth
+          height: visible ? systemGrid.visibleRows * root.compactCellHeight : 0
+          cellWidth: root.compactCellWidth
+          cellHeight: root.compactCellHeight
+          clip: true
+          model: root.systemRows
+          delegate: compactTileComponent
+          boundsBehavior: Flickable.StopAtBounds
+
+          // Two rows is the ceiling: the nine folders fit in one at full width,
+          // and a long list of search matches scrolls rather than eating the
+          // application grid.
+          readonly property int neededRows: Math.max(1, Math.ceil(root.systemRows.length / Math.max(1, panel.columns)))
+          readonly property int visibleRows: Math.min(2, systemGrid.neededRows)
+
+          property string section: "system"
+        }
+
         Item {
           id: footer
           anchors { bottom: parent.bottom; left: parent.left; right: parent.right }
@@ -870,7 +1147,9 @@ Item {
 
           Text {
             anchors { left: parent.left; verticalCenter: parent.verticalCenter }
-            text: "type to search · ↵ launch · right-click for actions · esc close"
+            text: root.browsing
+              ? "‹ back · ↵ open · type to search everything · esc up one level"
+              : "type to search · ↵ launch · right-click for actions · esc close"
             color: root.foreground
             opacity: 0.35
             font.family: root.fontFamily
@@ -955,8 +1234,10 @@ Item {
                     text: tile.modelData.monogram
                     color: root.foreground
                     opacity: 0.9
-                    font.family: root.fontFamily
-                    font.pixelSize: Math.round(monogram.width * 0.42)
+                    // A menu glyph is drawn to fill its em box and carries its
+                    // own font; two capital letters of a monogram need neither.
+                    font.family: tile.modelData.iconFont ? tile.modelData.iconFont : root.fontFamily
+                    font.pixelSize: Math.round(monogram.width * (tile.modelData.glyphScale ? tile.modelData.glyphScale : 0.42))
                   }
                 }
 
@@ -1016,6 +1297,114 @@ Item {
           }
         }
 
+        // ---------------------------------------------- system strip tile
+
+        // A folder and a command look almost alike, so the chevron carries the
+        // whole difference: with one, the tile opens; without, it runs.
+        Component {
+          id: compactTileComponent
+
+          Item {
+            id: ctile
+            required property var modelData
+            required property int index
+
+            readonly property bool selected: root.selectedSection === "system" && root.selectedIndex === ctile.index
+
+            width: root.compactCellWidth
+            height: root.compactCellHeight
+
+            Rectangle {
+              anchors.fill: parent
+              anchors.margins: Style.spacing.xs
+              radius: Style.cornerRadius > 0 ? Style.cornerRadius : Style.space(6)
+              color: ctile.selected ? Style.selectedFill : (compactHover.hovered ? Style.hoverFill : "transparent")
+              border.width: ctile.selected ? Math.max(1, Style.selectedBorderWidth) : 0
+              border.color: Style.selectedBorderColor
+            }
+
+            Column {
+              anchors.centerIn: parent
+              spacing: Style.spacing.xs
+
+              Item {
+                width: root.compactIconSize
+                height: root.compactIconSize
+                anchors.horizontalCenter: parent.horizontalCenter
+
+                Text {
+                  anchors.centerIn: parent
+                  text: String(ctile.modelData.monogram || "")
+                  color: root.foreground
+                  opacity: 0.9
+                  font.family: ctile.modelData.iconFont ? ctile.modelData.iconFont : root.fontFamily
+                  font.pixelSize: Math.round(root.compactIconSize * 0.72)
+                }
+
+                Text {
+                  visible: ctile.modelData.kind === "folder"
+                  anchors { right: parent.right; bottom: parent.bottom }
+                  anchors.rightMargin: -Style.space(2)
+                  text: "›"
+                  color: root.accent
+                  opacity: 0.9
+                  font.family: root.fontFamily
+                  font.pixelSize: Math.round(root.compactIconSize * 0.62)
+                }
+              }
+
+              Text {
+                width: root.compactCellWidth - Style.spacing.md
+                anchors.horizontalCenter: parent.horizontalCenter
+                horizontalAlignment: Text.AlignHCenter
+                text: ctile.modelData.name
+                color: root.foreground
+                opacity: ctile.selected ? 1 : 0.82
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                elide: Text.ElideRight
+                maximumLineCount: 1
+              }
+
+              // Only while searching: a flattened match needs to say where it
+              // came from, but a top-level folder does not.
+              Text {
+                visible: root.searching
+                width: root.compactCellWidth - Style.spacing.md
+                anchors.horizontalCenter: parent.horizontalCenter
+                horizontalAlignment: Text.AlignHCenter
+                text: String(ctile.modelData.subtext || "")
+                color: root.foreground
+                opacity: 0.4
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                // "…› Toggle" beats "Trigger › Tog…": the folder a command
+                // sits in says more than the branch it hangs off.
+                elide: Text.ElideLeft
+                maximumLineCount: 1
+              }
+            }
+
+            HoverHandler {
+              id: compactHover
+              onHoveredChanged: {
+                if (!hovered || contextMenu.visible) return
+                root.interacted = true
+                root.select("system", ctile.index)
+              }
+            }
+
+            MouseArea {
+              anchors.fill: parent
+              cursorShape: Qt.PointingHandCursor
+              onClicked: {
+                root.select("system", ctile.index)
+                root.launch(ctile.modelData)
+              }
+            }
+          }
+        }
+
         // ---------------------------------------------------- context menu
 
         MouseArea {
@@ -1064,6 +1453,22 @@ Item {
 
           function buildFor(target) {
             contextMenu.row = target
+
+            // A folder only opens. A command only runs — there is no desktop
+            // entry behind it, so no .desktop actions to offer and nothing for
+            // omarchy-remove-launcher-entry to remove.
+            if (target.kind === "folder") {
+              contextMenu.items = [{ label: "Open " + target.name, kind: "launch", action: null }]
+              return
+            }
+            if (target.kind === "command") {
+              var commandEntries = [{ label: "Run " + target.name, kind: "launch", action: null }]
+              if (root.usage[target.id])
+                commandEntries.push({ label: "Reset usage ranking", kind: "reset", action: null })
+              contextMenu.items = commandEntries
+              return
+            }
+
             var entries = [{ label: "Open " + target.name, kind: "launch", action: null }]
 
             // An agent has no desktop entry: no .desktop actions to offer, and
@@ -1149,6 +1554,11 @@ Item {
   onFrequentRowsChanged: if (!root.interacted) root.resetSelection()
 
   // Keep the keyboard selection inside the visible rows of the all-apps grid.
-  onSelectedIndexChanged: if (root.selectedSection === "all") allGrid.positionViewAtIndex(root.selectedIndex, GridView.Contain)
-  onSelectedSectionChanged: if (root.selectedSection === "all") allGrid.positionViewAtIndex(root.selectedIndex, GridView.Contain)
+  function revealSelection() {
+    if (root.selectedSection === "all") allGrid.positionViewAtIndex(root.selectedIndex, GridView.Contain)
+    else if (root.selectedSection === "system") systemGrid.positionViewAtIndex(root.selectedIndex, GridView.Contain)
+  }
+
+  onSelectedIndexChanged: root.revealSelection()
+  onSelectedSectionChanged: root.revealSelection()
 }
