@@ -24,6 +24,12 @@ Changes are grouped under `Added`, `Changed`, `Fixed`, `Removed`, `Deprecated`, 
   switch that changes something you cannot see should say what it is aimed at.
   On is shown by a filled pill as well as colour, so it does not depend on hue.
   Both rows are keyboard reachable and flipping one leaves the launcher open.
+- The window row is shown only when the launcher is summoned by keybinding. With
+  `input:follow_mouse` on, reaching for the bar button refocuses every window the
+  pointer crosses, so on that path the row would describe — and act on — a window
+  the user never chose. The bar button now marks its payload `{"source":"bar"}`;
+  anything unmarked is treated as keyboard, so existing keybindings need no
+  change.
 
 ## [0.3.0] - 2026-09-03
 

@@ -83,6 +83,13 @@ context menu: an app offers its `.desktop` actions (Chrome's *New Incognito
 Window*, a terminal's *New Window*, …), *Reset usage ranking*, and *Remove from
 launcher…*; an agent offers *Set as default agent* instead.
 
+The window toggles appear only when the launcher is opened by keybinding. Focus
+follows the mouse on Omarchy, so reaching for the bar button drags focus across
+every window the pointer crosses — by the time the grid is up, the "focused
+window" is whatever it last passed over rather than the one you were aiming at.
+Rather than offer switches pointed at the wrong window, the row is withheld on
+that path. A hotkey has no such travel, so its context is trustworthy.
+
 A System tile marked `›` is a folder: clicking it replaces the grid with its
 contents and puts a **‹ Back** target and a breadcrumb where *All apps* normally
 sits. Tiles without the marker run immediately. The System strip stays put while

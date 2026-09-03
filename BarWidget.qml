@@ -19,7 +19,11 @@ BarWidget {
     tooltipText: "App Launcher"
     onPressed: function(mouseButton) {
       if (!root.bar) return
-      root.bar.run("omarchy-shell shell toggle tyrsolution.app-launcher '{}'")
+      // Marked so the overlay knows it was summoned by pointer. Only the bar
+      // is marked: the SUPER+A binding lives in the user's bindings.lua, which
+      // a plugin cannot rewrite, so "unmarked" has to mean "not the bar" for
+      // every existing install to keep working without a migration.
+      root.bar.run("omarchy-shell shell toggle tyrsolution.app-launcher '{\"source\":\"bar\"}'")
     }
   }
 }

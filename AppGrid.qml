@@ -96,8 +96,23 @@ Item {
   // it lands, which draws every toggle off rather than guessing.
   property var toggleState: ({})
 
+  // How this summon was invoked: "bar" for the bar button, empty for the
+  // keybinding or a script.
+  property string launchSource: ""
+
+  // Focus follows the mouse here (input:follow_mouse = 1, mouse_refocus on),
+  // so reaching for the bar button drags focus across every window the cursor
+  // crosses on the way. By the time the overlay opens, the "focused window" is
+  // whatever the pointer last passed over — not the one being aimed at. The
+  // window row would then describe, and act on, the wrong window.
+  //
+  // A hotkey has no such travel, so its window context is trustworthy. Hiding
+  // the row on the pointer path is not tidying: it is declining to offer a
+  // control whose target cannot be trusted.
+  readonly property bool showWindowToggles: root.launchSource !== "bar"
+
   readonly property var sessionToggles: Toggles.sessionRows(root.toggleState)
-  readonly property var windowToggles: Toggles.windowRows(root.toggleState)
+  readonly property var windowToggles: root.showWindowToggles ? Toggles.windowRows(root.toggleState) : []
   // The window behind the launcher. A layer shell takes keyboard focus without
   // becoming the active window, so this is the same window SUPER+T would hit.
   readonly property string windowTarget: Toggles.windowTitle(root.toggleState)
@@ -176,7 +191,8 @@ Item {
 
   readonly property int cardChrome:
       card.contentTopInset + card.contentBottomInset
-    + root.sectionLabelHeight * 2 + root.compactCellAtRest * 2
+    + root.sectionLabelHeight + root.compactCellAtRest
+    + (root.showWindowToggles ? root.sectionLabelHeight + root.compactCellAtRest : 0)
     + Style.spacing.xs + root.ruleHeight
     + root.headerHeight + root.ruleHeight
     + (root.frequentAtRest ? root.sectionLabelHeight + root.cellHeight + Style.spacing.sm + root.ruleHeight : 0)
@@ -195,6 +211,7 @@ Item {
   function open(payloadJson) {
     var payload = ({})
     try { payload = JSON.parse(payloadJson || "{}") } catch (e) { payload = ({}) }
+    root.launchSource = String(payload.source || "")
     if (payload.fontFamily) root.fontFamily = payload.fontFamily
     if (Number(payload.iconScale) > 0) root.iconScale = Number(payload.iconScale)
 
@@ -1049,8 +1066,9 @@ Item {
 
         Text {
           id: windowLabel
+          visible: root.showWindowToggles
           anchors { top: sessionRow.bottom; left: parent.left }
-          height: root.sectionLabelHeight
+          height: visible ? root.sectionLabelHeight : 0
           verticalAlignment: Text.AlignVCenter
           // Space for this row is reserved whether or not a window is focused,
           // so the card cannot resize when the state batch lands a beat after
@@ -1064,9 +1082,10 @@ Item {
 
         GridView {
           id: windowRow
+          visible: root.showWindowToggles
           anchors { top: windowLabel.bottom; horizontalCenter: parent.horizontalCenter }
           width: panel.gridWidth
-          height: root.compactCellAtRest
+          height: visible ? root.compactCellAtRest : 0
           cellWidth: root.compactCellWidth
           cellHeight: root.compactCellAtRest
           interactive: false
