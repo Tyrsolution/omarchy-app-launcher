@@ -222,7 +222,7 @@ function menuIdOf(value) {
 // already has a tile that draws text in a rounded square for agent monograms.
 // Reusing it costs one font override and a size bump: glyphs are drawn to fill
 // their em box, so they need less headroom than two capital letters.
-function rowFor(items, order, item, whenResults, subtextOverride) {
+function rowFor(items, order, item, whenResults, checkedResults, subtextOverride) {
   var leaf = isLeaf(item)
   var count = leaf ? 0 : leafCountUnder(items, order, item.id, whenResults)
   var subtext = subtextOverride !== undefined && subtextOverride !== null
@@ -234,7 +234,7 @@ function rowFor(items, order, item, whenResults, subtextOverride) {
     id: rowId(item.id),
     menuId: item.id,
     kind: leaf ? "command" : "folder",
-    name: labelFor(item),
+    name: labelWithCheck(item, checkedResults),
     subtext: subtext,
     icon: "",
     iconUrl: "",
@@ -251,7 +251,7 @@ function rowFor(items, order, item, whenResults, subtextOverride) {
 // The tiles for one folder, in menu order: what a click drills into. Folders
 // with nothing visible under them are dropped rather than opening onto an
 // empty grid.
-function browseRows(items, order, parentId, whenResults) {
+function browseRows(items, order, parentId, whenResults, checkedResults) {
   var out = []
   var kids = childIds(items, order, parentId)
 
@@ -263,7 +263,7 @@ function browseRows(items, order, parentId, whenResults) {
     if (!isLeaf(entry) && leafCountUnder(items, order, entry.id, whenResults) === 0) continue
     // The breadcrumb is already in the header while browsing, so a leaf shows
     // its description or nothing rather than repeating where it lives.
-    out.push(rowFor(items, order, entry, whenResults,
+    out.push(rowFor(items, order, entry, whenResults, checkedResults,
                     isLeaf(entry) ? entry.description : undefined))
   }
   return out
@@ -272,7 +272,7 @@ function browseRows(items, order, parentId, whenResults) {
 // The System strip itself. A root that is its own action (upstream's "about")
 // has no children and becomes an ordinary command tile, which is why this goes
 // through the same rowFor as everything else.
-function sectionRows(items, order, whenResults) {
+function sectionRows(items, order, whenResults, checkedResults) {
   var out = []
   var roots = rootIds(items, order)
 
@@ -280,14 +280,14 @@ function sectionRows(items, order, whenResults) {
     var entry = items[roots[i]]
     if (!entry || !allowed(entry, whenResults)) continue
     if (!isLeaf(entry) && leafCountUnder(items, order, entry.id, whenResults) === 0) continue
-    out.push(rowFor(items, order, entry, whenResults))
+    out.push(rowFor(items, order, entry, whenResults, checkedResults))
   }
   return out
 }
 
 // Every action leaf, flattened with its breadcrumb — folders are for browsing,
 // search is for finding, so a query collapses the tree instead of walking it.
-function leafRows(items, order, whenResults) {
+function leafRows(items, order, whenResults, checkedResults) {
   var out = []
 
   for (var i = 0; i < order.length; i++) {
@@ -299,7 +299,7 @@ function leafRows(items, order, whenResults) {
     var root = rootOf(items, entry.id)
     if (SKIP_ROOTS[root]) continue
 
-    out.push(rowFor(items, order, entry, whenResults, breadcrumb(items, entry.id)))
+    out.push(rowFor(items, order, entry, whenResults, checkedResults, breadcrumb(items, entry.id)))
   }
   return out
 }
@@ -354,4 +354,120 @@ function sortMatches(rows, query) {
     return String(a.name || "").toLowerCase() < String(b.name || "").toLowerCase() ? -1 : 1
   })
   return out
+}
+
+// --------------------------------------------------------------- guards
+
+// `when:` decides whether a row shows, `checked:` whether it gets a ✓. Both
+// are bash, and 144 of the menu's leaves carry one here, so asking them one at
+// a time would fork 144 processes every time the menu is read. Everything from
+// here to parseGuards is vendored VERBATIM from the shell's MenuModel.js —
+// extracted rather than retyped, because the prelude's quoting is unforgiving
+// and a transcription slip would answer guards wrong rather than fail loudly.
+//
+// It must track upstream. If a guard starts coming back wrong, diff these
+// against $OMARCHY_PATH/shell/plugins/menu/MenuModel.js before looking here.
+
+var GUARD_READERS = [
+  "omarchy-channel-current",
+  "omarchy-default-agent",
+  "omarchy-default-browser",
+  "omarchy-default-editor",
+  "omarchy-default-terminal",
+  "omarchy-dns"
+]
+
+function guardHelpers() {
+  return 'declare -A __omarchy_pkgs=()\n'
+    + 'mapfile -t __omarchy_pkg_names < <({ pacman -Qq; LC_ALL=C pacman -Qi'
+    + " | awk '/^[A-Za-z]/ { provides = ($0 ~ /^Provides/); sub(/^[^:]*: /, \"\") }"
+    + ' provides && $0 != "None" { n = split($0, p, " ");'
+    + ' for (i = 1; i <= n; i++) { sub(/[<>=].*/, "", p[i]); print p[i] } }\'; } 2>/dev/null)\n'
+    + 'for __omarchy_pkg in "${__omarchy_pkg_names[@]}"; do __omarchy_pkgs[$__omarchy_pkg]=1; done\n'
+    + '__omarchy_pkg_has() { [[ -n ${__omarchy_pkgs[$1]-} ]] && return 0; '
+    + '[[ $1 == *[\\<\\>=]* ]] && { pacman -Q "$1" &>/dev/null; return; }; return 1; }\n'
+    + 'omarchy-pkg-present() { local p; for p in "$@"; do __omarchy_pkg_has "$p" || return 1; done; return 0; }\n'
+    + 'omarchy-pkg-missing() { local p; for p in "$@"; do __omarchy_pkg_has "$p" || return 0; done; return 1; }\n'
+    + 'omarchy-cmd-present() { local c; for c in "$@"; do command -v "$c" &>/dev/null || return 1; done; return 0; }\n'
+    + 'omarchy-cmd-missing() { local c; for c in "$@"; do command -v "$c" &>/dev/null || return 0; done; return 1; }\n'
+}
+
+function guardPrelude(guards) {
+  var prelude = guardHelpers()
+
+  for (var i = 0; i < GUARD_READERS.length; i++) {
+    // The guards arrive already substituted, so what marks a reader as wanted
+    // is the slot standing in for it, not the call it replaced.
+    if (guards.indexOf(guardReaderSlot(i)) < 0) continue
+    // `|| :` so a reader that exits nonzero cannot take the batch down with
+    // it under a login shell that turned on errexit.
+    prelude += "__omarchy_read_" + i + "=$(" + GUARD_READERS[i] + " 2>/dev/null) || :\n"
+  }
+
+  return prelude
+}
+
+function guardReaderSlot(index) {
+  return "${__omarchy_read_" + index + "}"
+}
+
+function substituteGuardReaders(expression) {
+  for (var i = 0; i < GUARD_READERS.length; i++)
+    expression = expression.split("$(" + GUARD_READERS[i] + ")").join(guardReaderSlot(i))
+
+  return expression
+}
+
+function guardLine(id, tag, expression) {
+  return "if { " + substituteGuardReaders(expression) + "; } >/dev/null 2>&1; then echo "
+    + id + ":" + tag + ":1; else echo " + id + ":" + tag + ":0; fi\n"
+}
+
+function guardScript(items) {
+  var guards = ""
+  var ids = Object.keys(items || {})
+
+  for (var i = 0; i < ids.length; i++) {
+    var entry = items[ids[i]]
+    if (!entry) continue
+    if (entry.when) guards += guardLine(ids[i], "w", entry.when)
+    if (entry.checked) guards += guardLine(ids[i], "c", entry.checked)
+  }
+
+  return guards ? guardPrelude(guards) + guards : ""
+}
+
+// `<id>:<w|c>:<0|1>` per line, split from the right: an id may contain a colon
+// in principle, the tag and value never do.
+function parseGuards(text) {
+  var when = ({})
+  var checked = ({})
+  var lines = String(text || "").split("\n")
+
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i].trim()
+    if (!line) continue
+
+    var colon = line.lastIndexOf(":")
+    if (colon < 0) continue
+    var value = line.substring(colon + 1) === "1"
+
+    var rest = line.substring(0, colon)
+    var tagAt = rest.lastIndexOf(":")
+    if (tagAt < 0) continue
+
+    var id = rest.substring(0, tagAt)
+    var tag = rest.substring(tagAt + 1)
+    if (tag === "w") when[id] = value
+    else if (tag === "c") checked[id] = value
+  }
+  return { when: when, checked: checked }
+}
+
+// A ✓ on a row whose `checked:` came back true — the menu's own convention for
+// "this is the setting you are already on".
+function labelWithCheck(item, checkedResults) {
+  var label = labelFor(item)
+  if (!item || !item.checked) return label
+  return (checkedResults && checkedResults[item.id]) ? label + " ✓" : label
 }

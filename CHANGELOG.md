@@ -12,6 +12,20 @@ Changes are grouped under `Added`, `Changed`, `Fixed`, `Removed`, `Deprecated`, 
 
 ## [Unreleased]
 
+### Added
+
+- `when:` and `checked:` guards are now evaluated, so System rows reflect the
+  machine they are on: Hibernate is hidden where it is unavailable, "Stop
+  Screenrecording" only appears while recording, and the current default agent,
+  browser, terminal and editor carry a ✓. On this machine that hides 70 of 269
+  leaves. Folders whose every descendant is hidden disappear rather than opening
+  onto an empty grid.
+- Guards are answered by one batched `bash` process per evaluation (~0.3s for
+  185 of them) rather than a process per row, and re-run on each summon so a row
+  cannot contradict state that changed since the shell started. The open path
+  never waits on it — the grid draws on the previous answers and takes the new
+  ones when they land.
+
 ## [0.2.0] - 2026-09-03
 
 ### Added

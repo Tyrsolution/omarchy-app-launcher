@@ -63,20 +63,29 @@ Item {
   property string browsePath: ""
   readonly property bool browsing: root.browsePath.length > 0
 
+  // `when:` (does this row show) and `checked:` (does it get a ✓), answered by
+  // one bash batch per menu load rather than a process per row. Empty until the
+  // first batch lands, which permits every row — a `when:` only hides on an
+  // explicit false, so the launcher opens on stale-but-complete answers instead
+  // of waiting, exactly as the menu does.
+  property var whenResults: ({})
+  property var checkedResults: ({})
+  property bool guardsPending: false
+
   // Flattened once per menu change, not per keystroke — 269 leaves is cheap to
   // filter but not to re-walk on every character.
-  readonly property var menuLeaves: Menu.leafRows(root.menuItems, root.menuOrder, null)
+  readonly property var menuLeaves: Menu.leafRows(root.menuItems, root.menuOrder, root.whenResults, root.checkedResults)
 
   // The strip is contextual: folders while browsing the launcher normally,
   // matching commands while a search is narrowing things down. Same pinned
   // place either way, so "system things live down there" stays true.
   readonly property var systemRows: root.searching
     ? Menu.sortMatches(root.menuLeaves, root.filterText)
-    : Menu.sectionRows(root.menuItems, root.menuOrder, null)
+    : Menu.sectionRows(root.menuItems, root.menuOrder, root.whenResults, root.checkedResults)
 
   // What the main grid shows: applications, or the folder being browsed.
   readonly property var displayRows: root.browsing
-    ? Menu.browseRows(root.menuItems, root.menuOrder, root.browsePath, null)
+    ? Menu.browseRows(root.menuItems, root.menuOrder, root.browsePath, root.whenResults, root.checkedResults)
     : root.allRows
 
   // Selection spans several grids, so it needs a section as well as an index.
@@ -150,6 +159,12 @@ Item {
     // Re-probe the agent roster on every summon, so an agent installed since
     // the last open shows up without a shell restart.
     root.probeAgents()
+    // Same for the guards: whether you can hibernate, or are recording right
+    // now, changes between summons. The open path does not wait on this — the
+    // grid draws on the previous answers and takes the new ones when they land
+    // a fraction of a second later. That can reflow a row under the pointer,
+    // which is the price of not showing a row that contradicts the system.
+    root.evaluateGuards()
     root.interacted = false
     root.refreshNewIds()
     root.rebuild()
@@ -392,6 +407,34 @@ Item {
     root.menuOrder = merged.order
     // A menu that shrank under us could leave the browsed folder gone.
     if (root.browsing && !root.menuItems[root.browsePath]) root.leaveBrowse()
+    root.evaluateGuards()
+  }
+
+  // One bash process for every `when:` and `checked:` in the menu. Evaluated on
+  // load rather than on open, so summoning the launcher never waits on it: the
+  // whole batch is ~0.3s here, which is fine in the background and would not be
+  // fine in front of the user.
+  function evaluateGuards() {
+    // Process ignores a command change while it is running, and `collected`
+    // belongs to the run in flight, so a second evaluation cannot overwrite the
+    // first — it would discard the lines already read and never start, and the
+    // surviving tail would land as the whole answer. Every id lost that way
+    // goes back to showing. Wait for the run in flight instead.
+    if (guardProc.running) {
+      root.guardsPending = true
+      return
+    }
+    root.guardsPending = false
+
+    var script = Menu.guardScript(root.menuItems)
+    if (!script) {
+      root.whenResults = ({})
+      root.checkedResults = ({})
+      return
+    }
+    guardProc.collected = ""
+    guardProc.command = ["bash", "-lc", script]
+    guardProc.running = true
   }
 
   function rowAt(section, index) {
@@ -647,6 +690,38 @@ Item {
     onLoadFailed: {
       root.customAgents = []
       root.rebuild()
+    }
+  }
+
+  Process {
+    id: guardProc
+    property string collected: ""
+
+    stdout: SplitParser {
+      onRead: function(data) { guardProc.collected += data + "\n" }
+    }
+
+    onExited: function(exitCode, exitStatus) {
+      // A batch that was killed rather than finished only told us about the rows
+      // it reached, and a row whose `when:` went unanswered shows. Keep the last
+      // complete set rather than let a half-read one through. A signal leaves
+      // the exit code at 0, so the status is what tells us.
+      if (exitCode !== 0 || exitStatus !== 0) {
+        if (root.guardsPending) Qt.callLater(function() { root.evaluateGuards() })
+        return
+      }
+
+      var parsed = Menu.parseGuards(guardProc.collected)
+      root.whenResults = parsed.when
+      root.checkedResults = parsed.checked
+      // Hidden rows change what the frequent row and the flattened search can
+      // draw from, so the app list has to be rebuilt against the new answers.
+      root.rebuild()
+      root.clampSelection()
+
+      // Run the evaluation that had to stand aside. Deferred a turn so the
+      // process is settled before its command is set again.
+      if (root.guardsPending) Qt.callLater(function() { root.evaluateGuards() })
     }
   }
 
