@@ -7,6 +7,7 @@ import qs.Ui
 import "Usage.js" as Usage
 import "Agents.js" as Agents
 import "Menu.js" as Menu
+import "Toggles.js" as Toggles
 
 // A centered launcher: a "Frequently used" row on top, then every installed
 // application and coding agent below, alphabetical and scrollable.
@@ -89,6 +90,18 @@ Item {
     ? Menu.browseRows(root.menuItems, root.menuOrder, root.browsePath, root.whenResults, root.checkedResults)
     : root.allRows
 
+  // ------------------------------------------------------------- toggles
+
+  // Read by one bash batch per summon, the same way the guards are. Empty until
+  // it lands, which draws every toggle off rather than guessing.
+  property var toggleState: ({})
+
+  readonly property var sessionToggles: Toggles.sessionRows(root.toggleState)
+  readonly property var windowToggles: Toggles.windowRows(root.toggleState)
+  // The window behind the launcher. A layer shell takes keyboard focus without
+  // becoming the active window, so this is the same window SUPER+T would hit.
+  readonly property string windowTarget: Toggles.windowTitle(root.toggleState)
+
   // Selection spans several grids, so it needs a section as well as an index.
   property string selectedSection: "all"
   property int selectedIndex: 0
@@ -163,6 +176,8 @@ Item {
 
   readonly property int cardChrome:
       card.contentTopInset + card.contentBottomInset
+    + root.sectionLabelHeight * 2 + root.compactCellAtRest * 2
+    + Style.spacing.xs + root.ruleHeight
     + root.headerHeight + root.ruleHeight
     + (root.frequentAtRest ? root.sectionLabelHeight + root.cellHeight + Style.spacing.sm + root.ruleHeight : 0)
     + (root.frequentAtRest ? root.sectionLabelHeight : 0)
@@ -171,7 +186,7 @@ Item {
                            + root.stripRowsAtRest * root.compactCellAtRest : 0)
     + root.footerHeight
 
-  readonly property int cardMaxHeight: Math.min(Style.space(760), panel.height - Style.gapsOut * 2)
+  readonly property int cardMaxHeight: Math.min(Style.space(900), panel.height - Style.gapsOut * 2)
   readonly property int cardGridRows: Math.max(1,
     Math.floor((root.cardMaxHeight - root.cardChrome) / root.cellHeight))
 
@@ -202,6 +217,7 @@ Item {
     // a fraction of a second later. That can reflow a row under the pointer,
     // which is the price of not showing a row that contradicts the system.
     root.evaluateGuards()
+    root.readToggles()
     root.interacted = false
     root.refreshNewIds()
     root.rebuild()
@@ -559,6 +575,7 @@ Item {
 
   function launch(row) {
     if (!row) return
+    if (row.kind === "toggle") { root.runToggle(row); return }
     if (row.kind === "folder") { root.enterFolder(row.menuId); return }
     if (row.kind === "command") { root.runCommand(row); return }
     if (row.kind === "agent") { root.launchAgent(row); return }
@@ -593,6 +610,28 @@ Item {
     root.persistUsage()
     root.dismiss()
     Util.execDetached(row.action)
+  }
+
+  // A toggle stays open: flipping Do Not Disturb and having the launcher vanish
+  // would make it a menu item, not a switch. The state is re-read after a beat
+  // because the toggle scripts write their flag and notify asynchronously.
+  function runToggle(row) {
+    if (!row || !row.action || row.available === false) return
+    Util.execDetached(row.action)
+    toggleSettle.restart()
+  }
+
+  Timer {
+    id: toggleSettle
+    interval: 220
+    onTriggered: root.readToggles()
+  }
+
+  function readToggles() {
+    if (toggleProc.running) return
+    toggleProc.collected = ""
+    toggleProc.command = ["bash", "-lc", Toggles.stateScript()]
+    toggleProc.running = true
   }
 
   // Sets the default and launches it — that is what the omarchy command does.
@@ -727,6 +766,18 @@ Item {
     onLoadFailed: {
       root.customAgents = []
       root.rebuild()
+    }
+  }
+
+  Process {
+    id: toggleProc
+    property string collected: ""
+    stdout: SplitParser {
+      onRead: function(data) { toggleProc.collected += data + "\n" }
+    }
+    onExited: function(exitCode, exitStatus) {
+      if (exitCode !== 0 || exitStatus !== 0) return
+      root.toggleState = Toggles.parseState(toggleProc.collected)
     }
   }
 
@@ -936,9 +987,81 @@ Item {
 
         // ---------------------------------------------------------- header
 
+        // ------------------------------------------------------- toggles
+
+        // Above the search field, and split in two: the session row acts on the
+        // machine, the window row on one window you cannot currently see. The
+        // window row is labelled with its target for exactly that reason.
+
+        Text {
+          id: sessionLabel
+          anchors { top: parent.top; left: parent.left }
+          height: root.sectionLabelHeight
+          verticalAlignment: Text.AlignVCenter
+          text: "Session"
+          color: root.foreground
+          opacity: 0.45
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+
+        GridView {
+          id: sessionRow
+          anchors { top: sessionLabel.bottom; horizontalCenter: parent.horizontalCenter }
+          width: panel.gridWidth
+          height: root.compactCellAtRest
+          cellWidth: root.compactCellWidth
+          cellHeight: root.compactCellAtRest
+          interactive: false
+          clip: true
+          model: root.sessionToggles
+          delegate: toggleTileComponent
+
+          property string section: "session"
+        }
+
+        Text {
+          id: windowLabel
+          anchors { top: sessionRow.bottom; left: parent.left }
+          height: root.sectionLabelHeight
+          verticalAlignment: Text.AlignVCenter
+          // Space for this row is reserved whether or not a window is focused,
+          // so the card cannot resize when the state batch lands a beat after
+          // the grid is already on screen.
+          text: root.windowTarget ? root.windowTarget : "No window focused"
+          color: root.foreground
+          opacity: root.windowTarget ? 0.45 : 0.3
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+
+        GridView {
+          id: windowRow
+          anchors { top: windowLabel.bottom; horizontalCenter: parent.horizontalCenter }
+          width: panel.gridWidth
+          height: root.compactCellAtRest
+          cellWidth: root.compactCellWidth
+          cellHeight: root.compactCellAtRest
+          interactive: false
+          clip: true
+          model: root.windowToggles
+          delegate: toggleTileComponent
+
+          property string section: "window"
+        }
+
+        Rectangle {
+          id: togglesRule
+          anchors { top: windowRow.bottom; left: parent.left; right: parent.right }
+          anchors.topMargin: Style.spacing.xs
+          height: root.ruleHeight
+          color: root.foreground
+          opacity: 0.12
+        }
+
         Item {
           id: header
-          anchors { top: parent.top; left: parent.left; right: parent.right }
+          anchors { top: togglesRule.bottom; left: parent.left; right: parent.right }
           height: root.headerHeight
 
           Text {
@@ -1420,6 +1543,84 @@ Item {
                   root.launch(tile.modelData)
                 }
               }
+            }
+          }
+        }
+
+        // ---------------------------------------------------- toggle tile
+
+        // On is carried by a filled pill plus the accent colour, not by colour
+        // alone — a toggle whose only difference is hue is unreadable to anyone
+        // who cannot separate the two.
+        Component {
+          id: toggleTileComponent
+
+          Item {
+            id: ttile
+            required property var modelData
+            required property int index
+
+            readonly property bool on: ttile.modelData.on === true
+            readonly property bool available: ttile.modelData.available !== false
+
+            width: root.compactCellWidth
+            height: root.compactCellAtRest
+            opacity: ttile.available ? 1 : 0.4
+
+            Rectangle {
+              anchors.fill: parent
+              anchors.margins: Style.spacing.xs
+              radius: Style.cornerRadius > 0 ? Style.cornerRadius : Style.space(6)
+              color: toggleHover.hovered && ttile.available ? Style.hoverFill : "transparent"
+            }
+
+            Column {
+              anchors.centerIn: parent
+              spacing: Style.spacing.xs
+
+              Rectangle {
+                id: pill
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: Math.round(root.compactIconSize * 1.5)
+                height: Math.round(root.compactIconSize * 0.92)
+                radius: height / 2
+                color: ttile.on ? root.accent : "transparent"
+                opacity: ttile.on ? 0.22 : 1
+                border.width: ttile.on ? 0 : Math.max(1, Style.normalBorderWidth)
+                border.color: Style.normalBorderColor
+
+                Behavior on color { ColorAnimation { duration: 120 } }
+
+                Text {
+                  anchors.centerIn: parent
+                  text: String(ttile.modelData.monogram || "")
+                  color: ttile.on ? root.accent : root.foreground
+                  opacity: ttile.on ? 1 : 0.55
+                  font.family: root.fontFamily
+                  font.pixelSize: Math.round(root.compactIconSize * 0.62)
+                }
+              }
+
+              Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: ttile.modelData.name
+                color: root.foreground
+                opacity: ttile.on ? 1 : 0.6
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                elide: Text.ElideRight
+                width: root.compactCellWidth - Style.spacing.md
+                horizontalAlignment: Text.AlignHCenter
+                maximumLineCount: 1
+              }
+            }
+
+            HoverHandler { id: toggleHover }
+
+            MouseArea {
+              anchors.fill: parent
+              cursorShape: ttile.available ? Qt.PointingHandCursor : Qt.ArrowCursor
+              onClicked: root.runToggle(ttile.modelData)
             }
           }
         }
