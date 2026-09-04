@@ -10,6 +10,10 @@ application updates the grid live, with no polling and no restart.
 Coding agents (Claude Code, Codex, Gemini, …) appear alongside applications and
 launch into a terminal.
 
+Two rows of toggles sit above the search field: **Session** switches (Do Not
+Disturb, Stay Awake, Nightlight, Screensaver, Window Gaps) and, when summoned by
+keybinding, switches for the focused window (Float, Fullscreen, Pin, Group).
+
 A **System** section pinned under the applications browses Omarchy's own menu as
 folders — themes, monitors, packages, power — so the launcher answers "change my
 theme" as readily as "open Chrome", by pointing rather than by remembering where
@@ -69,9 +73,9 @@ it you simply lose the guided wizards under Setup.
 | Key | Action |
 |---|---|
 | any character | filter as you type (name, generic name, comment, keywords, acronym) |
-| `↑` `↓` `←` `→` | move the selection; up/down crosses the section divider, keeping your column |
+| `↑` `↓` `←` `→` | move the selection; up/down crosses between the toggle rows, the grids and the System strip, keeping your column |
 | `Home` / `End` | first tile / last tile |
-| `Enter` | launch the selection — or open it, on a System folder |
+| `Enter` | launch the selection — open it on a System folder, flip it on a toggle |
 | `Menu` | context menu for the selection |
 | `Esc` | unwind one step: clear the filter, then leave the folder, then close |
 | `Backspace` | edit the filter, or leave the folder when the filter is empty |
@@ -82,6 +86,10 @@ Click a tile to launch it. Hovering moves the selection. Right-click opens the
 context menu: an app offers its `.desktop` actions (Chrome's *New Incognito
 Window*, a terminal's *New Window*, …), *Reset usage ranking*, and *Remove from
 launcher…*; an agent offers *Set as default agent* instead.
+
+Click a toggle to flip it. The launcher stays open, so a switch behaves like a
+switch rather than a menu item, and the pill updates in place once the change
+takes effect.
 
 The window toggles appear only when the launcher is opened by keybinding. Focus
 follows the mouse on Omarchy, so reaching for the bar button drags focus across
@@ -109,11 +117,24 @@ keyboard.
 omarchy-shell shell toggle tyrsolution.app-launcher '{"query":"chr"}'     # open pre-filtered
 omarchy-shell shell toggle tyrsolution.app-launcher '{"iconScale":1.4}'   # bigger icons
 omarchy-shell shell toggle tyrsolution.app-launcher '{"fontFamily":"Inter"}'
+omarchy-shell shell toggle tyrsolution.app-launcher '{"source":"bar"}'    # hide the window toggles
 ```
 
 ---
 
 ## What you see
+
+**Toggles** — two rows above the search field. *Session* acts on the machine;
+the second row acts on the window behind the launcher and is titled with it, so
+it is never a mystery what is about to change. On is drawn as a filled pill as
+well as a colour change, so it does not depend on telling two hues apart. A
+switch Hyprland would refuse — Pin on a tiled window — is shown disabled rather
+than pretending the click will work.
+
+Omarchy's menu carries these as plain rows with no declared state, so the
+launcher reads each one itself: a flag file, a Hyprland flag file, a status
+script, or a shell IPC call depending on the toggle. All of it is answered by
+one batched shell pass per summon.
 
 **Frequently used** — one row, most-launched first, containing only things you
 have actually launched. Each launch adds 1 to a score that halves every two
@@ -309,14 +330,24 @@ inside `omarchy-shell`:
   `~/.local/share/applications/`, which is the whole point of it.
 - **It reads** the two menu files — `$OMARCHY_PATH/default/omarchy/omarchy-menu.jsonc`
   and `~/.config/omarchy/extensions/omarchy-menu.jsonc` — to build the System
-  section. Read-only; it never writes either.
+  section. Read-only; it never writes either. For the toggle rows it also reads
+  toggle state: flag files under `~/.local/state/omarchy/toggles/`, the status
+  output of `omarchy-toggle-idle` and `omarchy-toggle-nightlight`, the shell's
+  own `notifications dndState`, and `hyprctl activewindow`. All read-only, and
+  the status subcommands are the ones that report without flipping anything.
 - **It runs** `mkdir -p` for its state directory, `command -v` to probe which
   agents exist, `gtk-launch`/`uwsm-app` to launch an app, and
   `omarchy-launch-tui` to open an agent. Every interpolated value is
   shell-quoted. For the System section it additionally runs two things, both
   bash: one batched script per summon that evaluates the menu's own
   `when:`/`checked:` conditions, and — only when you pick a System row — that
-  row's `action:` verbatim.
+  row's `action:` verbatim. The toggle rows add a second batched read per summon
+  and, only when you flip one, that toggle's own command: a stock
+  `omarchy-toggle-*` script, or a `hyprctl dispatch` for the window switches.
+- **The toggles run stock Omarchy commands**, the same ones the menu's own
+  toggle rows and the Hyprland keybindings run. Nothing here is a new privilege:
+  the window switches are `hyprctl dispatch` calls equivalent to `SUPER+T` and
+  `SUPER+F`, and the session switches are the `omarchy-toggle-*` scripts.
 - **The System section is as powerful as the menu it mirrors**, and no more. Its
   commands are the ones already in your menu files, run the same way
   `omarchy menu` runs them, so picking *Shutdown* shuts down and picking a
@@ -356,6 +387,7 @@ AppGrid.qml     the overlay: state, IO, layout, keyboard, context menu
 Usage.js        frecency arithmetic and state (de)serialization
 Agents.js       the coding-agent roster, launch argv, custom roster parsing
 Menu.js         the Omarchy menu: JSONC parsing, folder tree, guard batching
+Toggles.js      the toggle table, its batched state read, and row building
 BarWidget.qml   the bar button
 bin/            the gum wizards the Setup menu rows call
 ```

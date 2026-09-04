@@ -31,6 +31,13 @@ Changes are grouped under `Added`, `Changed`, `Fixed`, `Removed`, `Deprecated`, 
   anything unmarked is treated as keyboard, so existing keybindings need no
   change.
 
+### Removed
+
+- The overlay's `toggle()`. The shell decides open-vs-hide itself and calls
+  `open(payload)` directly, so it was never on the path `omarchy-shell shell
+  toggle` takes. It hardcoded `open("{}")`, which would have discarded the
+  `source` marker and quietly restored the window toggles on the pointer path.
+
 ## [0.3.0] - 2026-09-03
 
 ### Added
