@@ -256,10 +256,16 @@ Item {
     if (root.shell && typeof root.shell.hide === "function") root.shell.hide(root.pluginId)
   }
 
-  function toggle() {
-    if (root.opened) root.dismiss()
-    else root.open("{}")
-  }
+  // No toggle() here on purpose. The shell decides open-vs-hide itself and
+  // calls open(payload) directly (shell.qml summon/deliverIfLoaded), so a
+  // toggle on the overlay was never on the path `omarchy-shell shell toggle`
+  // takes. The generic `shell call` IPC could still reach one by name, but only
+  // while the plugin is loaded — that is, already open — so it could only ever
+  // have closed the launcher, which `shell hide` already does.
+  //
+  // It also hardcoded open("{}"), which now matters: that would discard the
+  // `source` marker the bar button sends, and silently bring back the window
+  // toggles on the pointer path.
 
   // ------------------------------------------------------------ app list
 
