@@ -16,6 +16,14 @@ Changes are grouped under `Added`, `Changed`, `Fixed`, `Removed`, `Deprecated`, 
 
 ## [Unreleased]
 
+### Changed
+
+- The project description now says what the launcher became rather than what it
+  shipped as. The old wording — an icon grid with frecency and agents — predated
+  the System section and the toggles, and read as a feature list. Updated in all
+  three places it lives: the GitHub About, `manifest.json` (which is what the
+  plugin marketplace lists you by), and the README's opening line.
+
 ## [0.4.0] - 2026-09-03
 
 ### Added

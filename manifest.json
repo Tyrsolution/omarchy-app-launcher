@@ -5,7 +5,7 @@
   "version": "0.4.0",
   "author": "Tyrsolution",
   "license": "MIT",
-  "description": "Centered icon-grid app launcher: clickable app icons, live install/remove tracking, frecency ordering",
+  "description": "One overlay for Omarchy: launch apps and coding agents, browse the system menu as folders, and flip the switches you reach for most",
   "kinds": [
     "overlay",
     "bar-widget"

@@ -1,6 +1,8 @@
 # App Launcher
 
-A centered grid of clickable application icons for [Omarchy](https://omarchy.org/) 4.x.
+One overlay for [Omarchy](https://omarchy.org/) 4.x — launch apps and coding
+agents, browse the system menu as folders, and flip the switches you reach for
+most.
 
 It runs as an `overlay` plugin inside `omarchy-shell` (Quickshell), so summoning
 it is an IPC call into a process that is already running — not a cold start. The
