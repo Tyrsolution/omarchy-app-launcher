@@ -16,6 +16,8 @@ Changes are grouped under `Added`, `Changed`, `Fixed`, `Removed`, `Deprecated`, 
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-03
+
 ### Added
 
 - Two toggle rows above the search field. **Session** — Do Not Disturb, Stay
@@ -120,7 +122,8 @@ Initial release.
 - Setup wizards for the keybinding and menu rows, plus documentation covering install,
   uninstall, the safety surface, and what "Remove from launcher" does.
 
-[Unreleased]: https://github.com/Tyrsolution/omarchy-app-launcher/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/Tyrsolution/omarchy-app-launcher/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Tyrsolution/omarchy-app-launcher/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Tyrsolution/omarchy-app-launcher/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Tyrsolution/omarchy-app-launcher/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Tyrsolution/omarchy-app-launcher/releases/tag/v0.1.0

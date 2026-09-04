@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "tyrsolution.app-launcher",
   "name": "App Launcher",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "author": "Tyrsolution",
   "license": "MIT",
   "description": "Centered icon-grid app launcher: clickable app icons, live install/remove tracking, frecency ordering",

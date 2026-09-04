@@ -62,11 +62,17 @@ it you simply lose the guided wizards under Setup.
 
 ## Using it
 
-| Open it with | What it runs |
-|---|---|
-| `SUPER + A` | `omarchy-shell shell toggle tyrsolution.app-launcher '{}'` |
-| The ▦ button in the bar | the same IPC toggle — click to open, click again to close |
-| Any script | `omarchy-shell shell toggle tyrsolution.app-launcher '{}'` |
+| Open it with | What it runs | Window toggles |
+|---|---|---|
+| `SUPER + A` | `omarchy-shell shell toggle tyrsolution.app-launcher '{}'` | shown |
+| The ▦ button in the bar | the same IPC toggle — click to open, click again to close | hidden |
+| Any script | `omarchy-shell shell toggle tyrsolution.app-launcher '{}'` | shown |
+
+**Use the keybinding when you want the window switches.** They are deliberately
+withheld from the bar button — moving the pointer there changes which window is
+focused, so the row would be aimed at the wrong one. The reasoning is under
+[Mouse](#mouse); the short version is that only the keyboard leaves the focused
+window where you left it.
 
 ### Keyboard
 
@@ -126,7 +132,8 @@ omarchy-shell shell toggle tyrsolution.app-launcher '{"source":"bar"}'    # hide
 
 **Toggles** — two rows above the search field. *Session* acts on the machine;
 the second row acts on the window behind the launcher and is titled with it, so
-it is never a mystery what is about to change. On is drawn as a filled pill as
+it is never a mystery what is about to change. That second row appears only when
+the launcher is opened by keybinding — see [Using it](#using-it). On is drawn as a filled pill as
 well as a colour change, so it does not depend on telling two hues apart. A
 switch Hyprland would refuse — Pin on a tiled window — is shown disabled rather
 than pretending the click will work.
