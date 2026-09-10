@@ -8,7 +8,8 @@
   "description": "One overlay for Omarchy: launch apps and coding agents, browse the system menu as folders, and flip the switches you reach for most",
   "kinds": [
     "overlay",
-    "bar-widget"
+    "bar-widget",
+    "menu"
   ],
   "entryPoints": {
     "overlay": "AppGrid.qml",

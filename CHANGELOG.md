@@ -24,6 +24,20 @@ Changes are grouped under `Added`, `Changed`, `Fixed`, `Removed`, `Deprecated`, 
   three places it lives: the GitHub About, `manifest.json` (which is what the
   plugin marketplace lists you by), and the README's opening line.
 
+### Fixed
+
+- The app grid is no longer empty. `omarchy-shell` hands a plugin the
+  `appLibrary` API only when its manifest declares the `menu` kind
+  (`shell.qml`, `appLibrary: shell.manifestHasKind(manifest, "menu") ? ... :
+  null`). Declaring only `overlay` and `bar-widget` meant `root.appLibrary` was
+  `null`, `rebuild()` returned early with `allRows = []`, and the grid rendered
+  "No applications found" on a machine with a full complement of desktop
+  entries. Adding `menu` to `kinds` unlocks it without changing how the plugin
+  loads: the panel loader resolves the kind by priority `panel` → `overlay` →
+  `menu`, so the launcher is still an overlay opened through
+  `entryPoints.overlay`, and the registry does not require an entry point per
+  declared kind.
+
 ## [0.4.0] - 2026-09-03
 
 ### Added
