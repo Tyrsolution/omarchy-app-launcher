@@ -73,16 +73,18 @@ function normalizeItem(id, raw) {
 
 function parse(rawText) {
   var stripped = stripJsonc(rawText)
-  if (!stripped.trim()) return []
+  if (!stripped.trim()) return null
 
   var parsed
   try {
     parsed = JSON.parse(stripped)
   } catch (e) {
     console.warn("app-grid: menu parse failed:", e)
-    return []
+    return null
   }
-  if (typeof parsed !== "object" || parsed === null) return []
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null
+
+  if (parsed.items !== undefined && (!parsed.items || typeof parsed.items !== "object" || Array.isArray(parsed.items))) return null
 
   var source = (parsed.items && typeof parsed.items === "object" && !Array.isArray(parsed.items))
     ? parsed.items

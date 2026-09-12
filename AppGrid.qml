@@ -5,17 +5,21 @@ import Quickshell.Wayland
 import qs.Commons
 import qs.Ui
 import "Usage.js" as Usage
+import "Favorites.js" as Favorites
+import "SessionState.js" as SessionState
 import "Agents.js" as Agents
 import "Menu.js" as Menu
 import "Toggles.js" as Toggles
 
-// A centered launcher: a "Frequently used" row on top, then every installed
-// application and coding agent below, alphabetical and scrollable.
+// A centered launcher: a two-tab section on top — Favorites you pinned and
+// Frequently used the launcher ranked — then every installed application and
+// coding agent below, alphabetical and scrollable.
 //
 // The app list itself is not ours: the shell's AppLibrary already watches
 // DesktopEntries, filters hidden/NoDisplay entries, resolves icon names to
 // files (re-indexing after an install), and launches under app-graphical.slice.
-// This plugin owns presentation, frecency ordering, and the "just added" badge.
+// This plugin owns presentation, pinned favorites, frecency ordering, and the
+// "just added" badge.
 Item {
   id: root
 
@@ -40,11 +44,18 @@ Item {
   // over the built-in roster.
   property var customAgents: []
   property bool agentProbePending: false
+  property bool agentsLoaded: false
   readonly property var agentRoster: Agents.mergeRoster(root.customAgents)
   readonly property string agentConfigPath: Quickshell.env("HOME") + "/.config/omarchy/app-launcher/agents.json"
-  // Every app with a recorded launch, widest-first. The visible row is a slice
-  // of this: a binding, because rebuild() can run before the window is sized
-  // and `panel.columns` is only known once it is.
+  // The two pools the tabbed section draws from. Favorites is resolved from
+  // `favorites` against whatever is installed right now; Frequent is every app
+  // with a recorded launch, widest-first. A query collapses both the same way
+  // the single section always did.
+  //
+  // Favorites is uncapped and Frequent is exactly one row — that asymmetry is
+  // the point. One is a shelf you arranged, the other is a readout.
+  property var favoritePool: []
+  readonly property var favoriteRows: root.searching ? [] : root.favoritePool
   property var frequentPool: []
   readonly property var frequentRows: root.searching
     ? []
@@ -59,6 +70,8 @@ Item {
   property var menuOrder: []
   property var menuDefaults: []
   property var menuCustom: []
+  property bool menuDefaultsLoaded: false
+  property bool menuCustomLoaded: false
 
   // "" while the strip shows its top-level folders; a menu id once drilled in.
   property string browsePath: ""
@@ -120,25 +133,45 @@ Item {
   // Selection spans several grids, so it needs a section as well as an index.
   property string selectedSection: "all"
   property int selectedIndex: 0
-  // Usage state loads from disk after the window is up, so the frequent row can
-  // appear a moment after open(). Until the user touches anything, let it take
-  // the caret; after that, leave the selection where they put it.
+  // Pins load from disk after the window is up, so the favorites row can appear
+  // a moment after open(). Until the user touches anything, let it take the
+  // caret; after that, leave the selection where they put it.
   property bool interacted: false
 
-  // Persisted state. `usage` drives the frequent row, `seenIds` drives badges.
+  // Persisted state. `favorites` drives the top row, `seenIds` drives badges.
+  // `usage` still records every launch, but nothing reads it back now that the
+  // row is pinned rather than ranked — kept because throwing away scores that
+  // took months to earn is not something an update should do quietly.
   property var usage: ({})
   property var seenIds: ({})
   property bool seenLoaded: false
   property var newIds: ({})
+  // Ids in the order they were pinned.
+  property var favorites: []
+  property bool favoritesLoaded: false
+
+  // Which tab the section is showing. Persisted, because which of the two you
+  // want is a preference rather than a per-visit choice.
+  property string activeTab: "favorites"
+  property bool viewInteracted: false
+  // ...and the collapsed state deliberately is not. Collapsing is a momentary
+  // "give me more applications right now", so it lasts as long as the shell
+  // does and no longer. See README.
+  property bool stripCollapsed: SessionState.stripCollapsed
+  onStripCollapsedChanged: SessionState.stripCollapsed = root.stripCollapsed
 
   // Tunable per summon: `omarchy-shell shell toggle tyrsolution.app-launcher '{"iconScale":1.4}'`
   property real iconScale: 1.0
   property string fontFamily: Style.font.menuFamily
 
-  // Searching collapses the two sections into one result grid: ranking by
-  // relevance and ranking by frecency at the same time reads as noise.
+  // Searching collapses everything into one result grid: a pinned row, a
+  // ranked one and a relevance-ranked one on screen at once reads as noise.
   readonly property bool searching: root.filterText.length > 0
-  readonly property bool showFrequent: !root.searching && root.frequentRows.length > 0
+  // The strip itself is always there when not searching, even with nothing
+  // pinned and nothing launched yet — an empty Favorites tab is where you find
+  // out the feature exists. Only its content can be empty.
+  readonly property bool showStrip: !root.searching
+  readonly property bool stripOpen: root.showStrip && !root.stripCollapsed
 
   // Follows the active Omarchy theme through the shared menu color tokens.
   property color background: Color.menu.background
@@ -181,26 +214,67 @@ Item {
   // too, or the dead space quietly returns.
   //
   // Measured "at rest" — as if not searching — so that typing cannot resize the
-  // card under the pointer. A query hides the frequent row, which frees height
+  // card under the pointer. A query hides the favorites row, which frees height
   // the grid takes as extra rows; whatever is left over then is a smaller gap in
   // a view that is usually full anyway.
-  readonly property bool frequentAtRest: root.frequentPool.length > 0
   readonly property bool systemAtRest: root.systemRestRows.length > 0
   readonly property int stripRowsAtRest: Math.min(2, Math.max(1,
     Math.ceil(root.systemRestRows.length / Math.max(1, panel.columns))))
 
-  readonly property int cardChrome:
+  // The collapse control lives in the gap between the search rule and the tab
+  // titles rather than on the title line, because the right-hand end of that
+  // line already belongs to "Frequently used". About half a label row: enough
+  // to read as its own line, not enough to cost the grid a row of applications.
+  readonly property int stripToggleHeight: Math.round(root.sectionLabelHeight * 0.6)
+
+  // One number for the whole section: the tiles, the underline and the height
+  // handoff to the applications all ride it, and they only read as a single
+  // movement while they share it. The house token is 140ms (Ui/PopupCard);
+  // this section is a bigger thing to move than a popup fading in, so it runs
+  // slightly longer.
+  readonly property int stripSlideMs: 154
+
+  // Split in two, because the strip's grid is the one part of the card whose
+  // height is decided by everything else: there is no limit on how many things
+  // you can pin, so the rows they get are whatever is left over. Summing the
+  // rest first is what keeps that from being a binding loop.
+  //
+  // The strip's chrome is unconditional now — two titles and a toggle are drawn
+  // whether or not either tab has anything in it — so switching tabs moves rows
+  // between this sum and the application grid without changing their total.
+  // That is what keeps the card exactly the same height either way.
+  readonly property int cardChromeSansStrip:
       card.contentTopInset + card.contentBottomInset
     + root.sectionLabelHeight + root.compactCellAtRest
     + (root.showWindowToggles ? root.sectionLabelHeight + root.compactCellAtRest : 0)
     + Style.spacing.xs + root.ruleHeight
     + root.headerHeight + root.ruleHeight
-    + (root.frequentAtRest ? root.sectionLabelHeight + root.cellHeight + Style.spacing.sm + root.ruleHeight : 0)
-    + (root.frequentAtRest ? root.sectionLabelHeight : 0)
+    + root.stripToggleHeight
+    + root.sectionLabelHeight + Style.spacing.sm + root.ruleHeight
+    + root.sectionLabelHeight
     + Style.spacing.md + Style.spacing.xs
     + (root.systemAtRest ? Style.spacing.xs + root.ruleHeight + root.sectionLabelHeight
                            + root.stripRowsAtRest * root.compactCellAtRest : 0)
     + root.footerHeight
+
+  // Frequently used is one row by definition. Favorites takes as many as it
+  // needs, and one row even when empty — that row holds the hint telling you
+  // how to fill it, and keeping it a whole row is what stops the card shifting
+  // by a remainder when you switch tabs.
+  readonly property int favoriteRowsNeeded: Math.max(1,
+    Math.ceil(root.favoritePool.length / Math.max(1, panel.columns)))
+  readonly property int stripRowsNeeded: root.stripCollapsed
+    ? 0
+    : (root.activeTab === "frequent" ? 1 : root.favoriteRowsNeeded)
+  // One application row is the floor. Pins take every row they need down to
+  // that, and scroll past it — growing without limit would push the card off
+  // the screen instead of showing you more of it.
+  readonly property int stripRowsAffordable: Math.max(1, Math.floor(
+    (root.cardMaxHeight - root.cardChromeSansStrip - root.cellHeight) / root.cellHeight))
+  readonly property int stripVisibleRows: Math.min(root.stripRowsNeeded, root.stripRowsAffordable)
+
+  readonly property int cardChrome: root.cardChromeSansStrip
+    + root.stripVisibleRows * root.cellHeight
 
   readonly property int cardMaxHeight: Math.min(Style.space(900), panel.height - Style.gapsOut * 2)
   readonly property int cardGridRows: Math.max(1,
@@ -270,7 +344,7 @@ Item {
   // ------------------------------------------------------------ app list
 
   function liveIdMap() {
-    var out = ({})
+    var out = Object.create(null)
     for (var a = 0; a < root.installedAgents.length; a++)
       out[Agents.rowId(String(root.installedAgents[a]))] = true
     if (!root.appLibrary) return out
@@ -283,7 +357,7 @@ Item {
   }
 
   function rebuild() {
-    if (!root.appLibrary) { root.allRows = []; root.frequentPool = []; return }
+    if (!root.appLibrary) { root.allRows = []; root.favoritePool = []; root.frequentPool = []; return }
     // sortedEntries returns search rows ({ entry, score, key, name }), not the
     // DesktopEntry itself — the entry is one level down. With no query it is
     // already alphabetical; with one it is ranked by the shell's fuzzy matcher.
@@ -327,9 +401,10 @@ Item {
 
     root.allRows = out
 
-    // Menu commands compete for the Frequently used row on the same terms as
-    // apps: a Screenshot run every day belongs up there. Only ones that have
-    // actually been run are considered, so the row does not fill with verbs.
+    // Menu commands compete for the Frequently used tab on the same terms as
+    // apps, and can be pinned to the Favorites tab on the same terms too: a
+    // Screenshot you run every day belongs in either. Only ones that have
+    // actually been run are ranked, so that tab does not fill with verbs.
     var pool = out.slice()
     for (var c = 0; c < root.menuLeaves.length; c++) {
       var leaf = root.menuLeaves[c]
@@ -340,8 +415,16 @@ Item {
       scored.score = leafScore
       pool.push(scored)
     }
-
     root.frequentPool = root.pickFrequent(pool)
+
+    // Pins are resolved against the same pools the grid draws from, so one
+    // whose app was uninstalled — or whose menu row is currently hidden behind
+    // a `when:` — stops appearing instead of drawing a dead tile.
+    //
+    // A pinned app is NOT filtered out of Frequently used. That tab is a
+    // readout of what you actually launch, and editing it to avoid repeating a
+    // tile would make it lie.
+    root.favoritePool = Favorites.resolve(root.favorites, [out, root.menuLeaves])
     root.clampSelection()
   }
 
@@ -387,6 +470,7 @@ Item {
   // after open() has already started one), so queue instead of dropping it.
   function probeAgents() {
     if (agentProbe.running) { root.agentProbePending = true; return }
+    root.agentsLoaded = false
     agentProbe.running = true
   }
 
@@ -418,8 +502,8 @@ Item {
     return matched
   }
 
-  // Apps with no recorded launch never appear here, so a fresh install shows no
-  // section at all rather than an arbitrary one.
+  // Apps with no recorded launch never appear here, so a fresh install shows an
+  // empty tab rather than an arbitrary one.
   function pickFrequent(rows) {
     var scored = []
     for (var i = 0; i < rows.length; i++)
@@ -429,6 +513,7 @@ Item {
   }
 
   function setFilter(next) {
+    root.interacted = true
     root.filterText = next
     // Folders are for browsing, search is for finding: a query collapses the
     // tree and matches across every leaf rather than filtering one folder.
@@ -439,18 +524,19 @@ Item {
   }
 
   function rowsFor(section) {
-    if (section === "session") return root.sessionToggles
-    if (section === "window") return root.windowToggles
-    if (section === "frequent") return root.frequentRows
-    if (section === "system") return root.systemRows
-    return root.displayRows
+    if (section === "session") return root.sessionToggles || []
+    if (section === "window") return root.windowToggles || []
+    if (section === "favorites") return root.favoriteRows || []
+    if (section === "frequent") return root.frequentRows || []
+    if (section === "system") return root.systemRows || []
+    return root.displayRows || []
   }
 
   // The grids top to bottom. Crossing between them is just a step along this
   // list, which is why the five-way version replaced the hand-written pairs:
   // every boundary used to be its own branch, and adding two rows would have
   // meant four more.
-  readonly property var sectionOrder: ["session", "window", "frequent", "all", "system"]
+  readonly property var sectionOrder: ["session", "window", "favorites", "frequent", "all", "system"]
 
   // Only the ones that currently have anything in them — an empty section is
   // skipped rather than trapping the caret.
@@ -458,7 +544,11 @@ Item {
     var out = []
     for (var i = 0; i < root.sectionOrder.length; i++) {
       var name = root.sectionOrder[i]
-      if (name === "frequent" && !root.showFrequent) continue
+      // Only the tab actually on screen is in the caret's path. The other one
+      // is not hidden behind a scroll, it is not drawn at all, and a collapsed
+      // strip draws neither — so Down out of the search field lands straight in
+      // the applications.
+      if (root.isStripSection(name) && (!root.stripOpen || root.activeTab !== name)) continue
       if (root.rowsFor(name).length > 0) out.push(name)
     }
     return out
@@ -533,8 +623,12 @@ Item {
     guardProc.running = true
   }
 
+  function isStripSection(section) {
+    return section === "favorites" || section === "frequent"
+  }
+
   function rowAt(section, index) {
-    var rows = root.rowsFor(section)
+    var rows = root.rowsFor(section) || []
     if (index < 0 || index >= rows.length) return null
     return rows[index]
   }
@@ -549,11 +643,16 @@ Item {
   }
 
   function resetSelection() {
-    if (root.showFrequent) { root.select("frequent", 0); return }
+    // rowsFor() rather than a property: this runs while properties are still
+    // being initialised — the favorites pool takes its default long before
+    // anything declared further down the file has a binding — and reading a
+    // property that does not exist yet throws instead of returning empty.
+    var strip = root.rowsFor(root.activeTab)
+    if (root.stripOpen && strip.length > 0) { root.select(root.activeTab, 0); return }
     // A query can match commands and no applications at all. Leaving the caret
     // on an empty grid would mean Enter did nothing while a result sat visible
     // in the strip, so the selection follows the results.
-    if (root.displayRows.length === 0 && root.systemRows.length > 0) {
+    if (root.rowsFor("all").length === 0 && root.rowsFor("system").length > 0) {
       root.select("system", 0)
       return
     }
@@ -561,7 +660,7 @@ Item {
   }
 
   function clampSelection() {
-    var rows = root.rowsFor(root.selectedSection)
+    var rows = root.rowsFor(root.selectedSection) || []
     if (rows.length === 0) { root.resetSelection(); return }
     if (root.selectedIndex >= rows.length) root.selectedIndex = rows.length - 1
     if (root.selectedIndex < 0) root.selectedIndex = 0
@@ -576,7 +675,22 @@ Item {
     if (rows.length === 0) return
 
     if (dx !== 0) {
-      root.selectedIndex = Math.max(0, Math.min(rows.length - 1, root.selectedIndex + dx))
+      var wanted = root.selectedIndex + dx
+      // Inside the strip the two tabs behave as one continuous run of tiles:
+      // walking off either end crosses to the other tab rather than stopping
+      // dead. That is the whole keyboard story for tabs — no new binding, and
+      // it reads the same way the titles do, left to right.
+      if (root.isStripSection(root.selectedSection) && (wanted < 0 || wanted >= rows.length)) {
+        var across = Favorites.otherTab(root.selectedSection)
+        var acrossRows = root.rowsFor(across)
+        // An empty tab is not somewhere to strand the caret.
+        if (acrossRows.length > 0) {
+          root.showTab(across)
+          root.select(across, wanted < 0 ? acrossRows.length - 1 : 0)
+          return
+        }
+      }
+      root.selectedIndex = Math.max(0, Math.min(rows.length - 1, wanted))
       return
     }
 
@@ -607,6 +721,52 @@ Item {
     var prevRows = root.rowsFor(prev)
     var lastRowStart = Math.floor((prevRows.length - 1) / columns) * columns
     root.select(prev, Math.min(lastRowStart + column, prevRows.length - 1))
+  }
+
+  // ----------------------------------------------------------------- tabs
+
+  // Clicking a title while the strip is shut opens it on that tab, so the
+  // titles double as "open me here" and the toggle is only ever needed to
+  // close. Switching to a tab you are already on, while open, does nothing.
+  function showTab(tab) {
+    var wanted = Favorites.validTab(tab)
+    if (!wanted) return
+    root.viewInteracted = true
+    root.interacted = true
+    var changed = root.activeTab !== wanted
+    root.stripCollapsed = false
+    root.activeTab = wanted
+    // Even the default title is an explicit choice if the saved view is late.
+    root.persistView()
+    if (!changed) return
+    // The caret cannot stay in a grid that is sliding off screen.
+    if (root.isStripSection(root.selectedSection)) {
+      var rows = root.rowsFor(wanted)
+      if (rows.length > 0) root.select(wanted, 0)
+      else root.resetSelection()
+    }
+  }
+
+  function toggleStrip() {
+    root.viewInteracted = true
+    root.interacted = true
+    root.stripCollapsed = !root.stripCollapsed
+    // Collapsing takes the caret with it rather than leaving it on a grid
+    // nobody can see.
+    if (root.stripCollapsed && root.isStripSection(root.selectedSection)) root.resetSelection()
+  }
+
+  // File reads can finish after pools or user input. Restore the preference
+  // only while it cannot undo a choice, and move a caret off the hidden tab.
+  function restoreView(raw) {
+    var tab = Favorites.parseView(raw)
+    if (!tab || root.viewInteracted || root.interacted) return
+    root.activeTab = tab
+    root.resetSelection()
+  }
+
+  function persistView() {
+    viewFile.setText(Favorites.serializeView(root.activeTab))
   }
 
   // ------------------------------------------------------------ launching
@@ -640,8 +800,8 @@ Item {
 
   // Menu rows are plain shell commands, run exactly the way the menu plugin
   // runs them (Menu.qml runAction) so a row behaves the same in both places.
-  // They earn frecency like anything else: "Screenshot" should be able to climb
-  // into the Frequently used row.
+  // They can be pinned like anything else: "Screenshot" belongs in Favorites if
+  // that is what you reach for.
   function runCommand(row) {
     if (!row || !row.action) return
     root.usage = Usage.record(root.usage, row.id, Date.now())
@@ -727,6 +887,9 @@ Item {
     if (root.appLibrary) root.appLibrary.remove(row.id, row.name)
   }
 
+  // Frecency is on screen again, so the way to disown a bad entry is back with
+  // it. Reset Favorites is the same idea for the other tab; both are in the
+  // Omarchy menu, and this is the per-row version.
   function resetUsage(row) {
     if (!row) return
     root.usage = Usage.forget(root.usage, row.id)
@@ -744,38 +907,82 @@ Item {
     root.newIds = next
   }
 
-  // Ids whose frecency is worth keeping. Deliberately wider than liveIdMap():
+  // Ids worth keeping state for. Deliberately wider than liveIdMap():
   // that one is the "just added" badge domain, and menu commands do not belong
   // in it — they are never badged, and folding 269 of them in would report the
   // whole menu as new the first time this runs. But their scores still have to
   // survive the prune below, or every command's ranking would die on close.
   function scorableIdMap() {
     var out = root.liveIdMap()
-    if (root.menuLeaves.length > 0) {
-      for (var i = 0; i < root.menuLeaves.length; i++) out[root.menuLeaves[i].id] = true
-      return out
+    // Guards control visibility, not existence. Include hidden commands.
+    var commands = Menu.leafRows(root.menuItems, root.menuOrder, ({}), ({}))
+    for (var i = 0; i < commands.length; i++) out[commands[i].id] = true
+
+    // An empty/inaccessible app list has no readiness signal from the host.
+    // Preserve that domain rather than interpreting startup as mass removal.
+    var appsReady = root.appLibrary && root.appLibrary.sortedEntries("").length > 0
+    var menuReady = root.menuDefaultsLoaded && root.menuCustomLoaded
+    var saved = Object.keys(root.usage).concat(root.favorites)
+    for (var j = 0; j < saved.length; j++) {
+      var id = String(saved[j])
+      if (Menu.menuIdOf(id)) {
+        if (!menuReady) out[id] = true
+      } else if (Agents.agentIdOf(id)) {
+        if (!root.agentsLoaded || agentProbe.running) out[id] = true
+      } else if (!appsReady) out[id] = true
     }
-    // The menu has not loaded yet, or failed to. Keep the command scores that
-    // are already on disk rather than pruning them away on a transient error.
-    for (var id in root.usage) if (Menu.menuIdOf(id)) out[id] = true
     return out
   }
 
   function markAllSeen() {
     var live = root.liveIdMap()
-    root.seenIds = live
-    root.newIds = ({})
-    seenFile.setText(Usage.serializeSeen(live))
+    if (root.appLibrary && root.appLibrary.sortedEntries("").length > 0 && root.agentsLoaded) {
+      root.seenIds = live
+      root.newIds = ({})
+      seenFile.setText(Usage.serializeSeen(live))
+    }
     // An app that is gone has no score worth keeping.
-    var pruned = Usage.prune(root.usage, root.scorableIdMap())
+    var scorable = root.scorableIdMap()
+    var pruned = Usage.prune(root.usage, scorable)
     if (JSON.stringify(pruned) !== JSON.stringify(root.usage)) {
       root.usage = pruned
       root.persistUsage()
+    }
+    // Nor a pin. Same domain as the scores on purpose: an entry that is gone
+    // for good goes, one that is merely hidden behind a `when:` right now stays
+    // pinned, because it will be back.
+    if (root.favoritesLoaded) {
+      var keptPins = Favorites.prune(root.favorites, scorable)
+      if (keptPins.length !== root.favorites.length) {
+        root.favorites = keptPins
+        root.persistFavorites()
+      }
     }
   }
 
   function persistUsage() {
     usageFile.setText(Usage.serializeUsage(root.usage))
+  }
+
+  // ------------------------------------------------------------ favorites
+
+  function isFavorite(id) {
+    return Favorites.contains(root.favorites, id)
+  }
+
+  // Pinning takes effect where you can see it: the row reflows under the
+  // pointer rather than waiting for the launcher to close. That costs a
+  // rebuild, which is the same work a launch already does.
+  function toggleFavorite(row) {
+    if (!row || !Favorites.pinnable(row.kind)) return
+    root.interacted = true
+    root.favorites = Favorites.toggle(root.favorites, String(row.id))
+    root.persistFavorites()
+    root.rebuild()
+  }
+
+  function persistFavorites() {
+    favoritesFile.setText(Favorites.serialize(root.favorites))
   }
 
   Component.onCompleted: Util.execDetached("mkdir -p " + Util.shellQuote(root.stateDir))
@@ -793,8 +1000,12 @@ Item {
       }
     }
     onStarted: root.pendingAgents = []
-    onExited: {
-      root.installedAgents = root.pendingAgents.slice()
+    onExited: function(exitCode, exitStatus) {
+      // command -v may return 1 when the last optional agent is absent.
+      if (exitStatus === 0 && (exitCode === 0 || exitCode === 1)) {
+        root.installedAgents = root.pendingAgents.slice()
+        root.agentsLoaded = true
+      } else root.agentsLoaded = false
       root.refreshNewIds()
       root.rebuild()
       if (root.agentProbePending) {
@@ -852,7 +1063,7 @@ Item {
       var parsed = Menu.parseGuards(guardProc.collected)
       root.whenResults = parsed.when
       root.checkedResults = parsed.checked
-      // Hidden rows change what the frequent row and the flattened search can
+      // Hidden rows change what the favorites row and the flattened search can
       // draw from, so the app list has to be rebuilt against the new answers.
       root.rebuild()
       root.clampSelection()
@@ -870,18 +1081,28 @@ Item {
     path: root.omarchyPath + "/default/omarchy/omarchy-menu.jsonc"
     watchChanges: true
     printErrors: false
-    onLoaded: { root.menuDefaults = Menu.parse(text()); root.reloadMenu() }
+    onLoaded: {
+      var parsed = Menu.parse(text())
+      root.menuDefaultsLoaded = parsed !== null
+      if (parsed !== null) root.menuDefaults = parsed
+      root.reloadMenu()
+    }
     onFileChanged: reload()
-    onLoadFailed: { root.menuDefaults = []; root.reloadMenu() }
+    onLoadFailed: { root.menuDefaultsLoaded = false }
   }
 
   FileView {
     path: Quickshell.env("HOME") + "/.config/omarchy/extensions/omarchy-menu.jsonc"
     watchChanges: true
     printErrors: false
-    onLoaded: { root.menuCustom = Menu.parse(text()); root.reloadMenu() }
+    onLoaded: {
+      var parsed = Menu.parse(text())
+      root.menuCustomLoaded = parsed !== null
+      if (parsed !== null) root.menuCustom = parsed
+      root.reloadMenu()
+    }
     onFileChanged: reload()
-    onLoadFailed: { root.menuCustom = []; root.reloadMenu() }
+    onLoadFailed: { root.menuCustomLoaded = false }
   }
 
   FileView {
@@ -922,6 +1143,41 @@ Item {
       root.seenLoaded = true
       root.markAllSeen()
       root.rebuild()
+    }
+  }
+
+  FileView {
+    id: favoritesFile
+    path: root.stateDir + "/favorites.json"
+    atomicWrites: true
+    printErrors: false
+    onLoaded: {
+      root.favorites = Favorites.parse(text()) || []
+      root.favoritesLoaded = true
+      root.rebuild()
+    }
+    onLoadFailed: {
+      root.favorites = []
+      root.favoritesLoaded = true
+      root.rebuild()
+    }
+  }
+
+  // Which tab was open last. Its own file so favorites.json stays a list of
+  // ids and nothing else — that file is meant to be readable and hand-editable
+  // as exactly what it looks like.
+  //
+  // No file means this is a first run: the default below stands, and Favorites
+  // is what opens. Landing on an empty tab that explains itself is how the
+  // feature gets discovered; the applications you already reach for are one
+  // click away on the other title.
+  FileView {
+    id: viewFile
+    path: root.stateDir + "/view.json"
+    atomicWrites: true
+    printErrors: false
+    onLoaded: {
+      root.restoreView(text())
     }
   }
 
@@ -986,6 +1242,7 @@ Item {
 
         Keys.priority: Keys.BeforeItem
         Keys.onPressed: function(event) {
+          root.interacted = true
           if (contextMenu.visible) {
             if (event.key === Qt.Key_Escape) { contextMenu.hide(); event.accepted = true }
             return
@@ -1177,41 +1434,209 @@ Item {
           opacity: 0.12
         }
 
-        // ------------------------------------------------- frequently used
+        // ------------------------------------------------ favorites / frequent
 
-        Text {
-          id: frequentLabel
-          visible: root.showFrequent
-          anchors { top: headerRule.bottom; left: parent.left }
-          height: visible ? root.sectionLabelHeight : 0
-          verticalAlignment: Text.AlignVCenter
-          text: "Frequently used"
-          color: root.foreground
-          opacity: 0.45
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
+        // Two sections that used to be one, and are one again: same slot, same
+        // height budget, two titles parked at opposite ends of the same line.
+        // Clicking a title slides the tiles across under them rather than
+        // stacking a second grid below, which is what keeps the applications
+        // from being pushed off the bottom of the card by a section you are not
+        // looking at.
+
+        // The toggle sits in the gap above the titles, not beside them: the
+        // right-hand end of the title line belongs to "Frequently used". It
+        // does not move between open and shut, so it is never chasing the
+        // pointer that just clicked it.
+        Item {
+          id: stripToggleRow
+          visible: root.showStrip
+          anchors { top: headerRule.bottom; left: parent.left; right: parent.right }
+          height: visible ? root.stripToggleHeight : 0
+
+          Text {
+            id: stripToggle
+            anchors { right: parent.right; verticalCenter: parent.verticalCenter }
+            // Nerd Font chevrons, the same private-use block as the pin stars.
+            // Down while the section is showing, right while it is folded away.
+            text: root.stripCollapsed ? "\uf054" : "\uf078"
+            color: root.foreground
+            opacity: toggleArea.containsMouse ? 1 : 0.4
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            Behavior on opacity { NumberAnimation { duration: 90 } }
+
+            MouseArea {
+              id: toggleArea
+              anchors.fill: parent
+              anchors.margins: -Style.space(4)
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.toggleStrip()
+            }
+          }
         }
 
-        GridView {
-          id: frequentGrid
-          visible: root.showFrequent
-          anchors { top: frequentLabel.bottom; horizontalCenter: parent.horizontalCenter }
-          width: panel.gridWidth
-          height: visible ? root.cellHeight : 0
-          cellWidth: root.cellWidth
-          cellHeight: root.cellHeight
-          interactive: false
-          clip: true
-          model: root.frequentRows
-          delegate: tileComponent
+        Item {
+          id: tabBar
+          visible: root.showStrip
+          anchors { top: stripToggleRow.bottom; left: parent.left; right: parent.right }
+          height: visible ? root.sectionLabelHeight : 0
 
-          property string section: "frequent"
+          component TabTitle: Text {
+            required property string tabId
+            color: root.foreground
+            opacity: root.activeTab === tabId && !root.stripCollapsed
+              ? 1 : (titleArea.containsMouse ? 0.7 : 0.35)
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            Behavior on opacity { NumberAnimation { duration: root.stripSlideMs; easing.type: Easing.OutCubic } }
+            MouseArea {
+              id: titleArea
+              anchors.fill: parent
+              anchors.margins: -Style.space(3)
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.showTab(parent.tabId)
+            }
+          }
+
+          TabTitle {
+            id: favoritesTab
+            anchors { left: parent.left; verticalCenter: parent.verticalCenter }
+            tabId: "favorites"
+            text: "Favorites"
+          }
+          TabTitle {
+            id: frequentTab
+            anchors { right: parent.right; verticalCenter: parent.verticalCenter }
+            tabId: "frequent"
+            text: "Frequently used"
+          }
+
+          // Travels between the two titles on the same curve the tiles travel
+          // on, so the motion reads as one movement rather than two.
+          Rectangle {
+            id: tabUnderline
+            visible: root.stripOpen
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: Style.spacing.xs
+            x: root.activeTab === "frequent" ? frequentTab.x : favoritesTab.x
+            width: root.activeTab === "frequent" ? frequentTab.width : favoritesTab.width
+            height: Math.max(1, Style.space(2))
+            radius: height / 2
+            color: root.accent
+
+            Behavior on x { NumberAnimation { duration: root.stripSlideMs; easing.type: Easing.OutCubic } }
+            Behavior on width { NumberAnimation { duration: root.stripSlideMs; easing.type: Easing.OutCubic } }
+          }
+        }
+
+        // The viewport is one tab wide and the track is two, so switching is a
+        // translation rather than a swap: nothing is created or destroyed, and
+        // both grids keep their scroll position.
+        //
+        // Its height animates as well, and `allArea` below is anchored top and
+        // bottom — so the rows this gives up are handed to the applications on
+        // the same curve, and the card itself never changes height.
+        Item {
+          id: stripViewport
+          // Visible on the strip being there at all, NOT on it being open:
+          // collapsing has to leave the item alive long enough for its height
+          // to animate down to nothing, and `stripVisibleRows` is already 0
+          // while collapsed. Hiding it here instead would snap.
+          visible: root.showStrip
+          anchors { top: tabBar.bottom; horizontalCenter: parent.horizontalCenter }
+          width: panel.gridWidth
+          height: visible ? root.stripVisibleRows * root.cellHeight : 0
+          clip: true
+
+          Behavior on height { NumberAnimation { duration: root.stripSlideMs; easing.type: Easing.OutCubic } }
+
+          Row {
+            id: stripTrack
+            height: stripViewport.height
+            x: root.activeTab === "frequent" ? -stripViewport.width : 0
+
+            Behavior on x { NumberAnimation { duration: root.stripSlideMs; easing.type: Easing.OutCubic } }
+
+            Item {
+              width: stripViewport.width
+              height: stripViewport.height
+
+              GridView {
+                id: favoritesGrid
+                anchors.fill: parent
+                cellWidth: root.cellWidth
+                cellHeight: root.cellHeight
+                clip: true
+                model: root.favoriteRows
+                delegate: tileComponent
+                boundsBehavior: Flickable.StopAtBounds
+
+                // Nothing caps how much you can pin, so this is where "as many
+                // as you like" stops being free: the tab takes every row it
+                // needs down to leaving one row of applications, and scrolls
+                // from there.
+                interactive: root.activeTab === "favorites"
+                  && root.favoriteRowsNeeded > root.stripVisibleRows
+
+                property string section: "favorites"
+              }
+
+              // Nothing pinned. This is the only place the star is explained,
+              // and it is why an empty Favorites tab is drawn rather than
+              // hidden — a section that appears only once you have already
+              // found the feature teaches nobody.
+              Text {
+                visible: root.favoritePool.length === 0
+                anchors.centerIn: parent
+                horizontalAlignment: Text.AlignHCenter
+                text: "Click the \uf005 on any app to pin it here"
+                color: root.foreground
+                opacity: 0.35
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+            }
+
+            Item {
+              width: stripViewport.width
+              height: stripViewport.height
+
+              GridView {
+                id: frequentGrid
+                anchors.fill: parent
+                cellWidth: root.cellWidth
+                cellHeight: root.cellHeight
+                interactive: false
+                clip: true
+                model: root.frequentRows
+                delegate: tileComponent
+                boundsBehavior: Flickable.StopAtBounds
+
+                property string section: "frequent"
+              }
+
+              // A fresh install has launched nothing, so this tab has nothing
+              // to rank yet. Saying so beats an empty rectangle.
+              Text {
+                visible: root.frequentRows.length === 0
+                anchors.centerIn: parent
+                horizontalAlignment: Text.AlignHCenter
+                text: "Apps you open will show up here"
+                color: root.foreground
+                opacity: 0.35
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+            }
+          }
         }
 
         Rectangle {
           id: sectionRule
-          visible: root.showFrequent
-          anchors { top: frequentGrid.bottom; left: parent.left; right: parent.right }
+          visible: root.showStrip
+          anchors { top: stripViewport.bottom; left: parent.left; right: parent.right }
           anchors.topMargin: visible ? Style.spacing.sm : 0
           height: visible ? Math.max(1, Style.space(1)) : 0
           color: root.foreground
@@ -1225,7 +1650,7 @@ Item {
         // is discoverable with a mouse, and this section exists for the mouse.
         Item {
           id: allLabel
-          visible: root.showFrequent || root.browsing
+          visible: root.showStrip || root.browsing
           anchors { top: sectionRule.bottom; left: parent.left; right: parent.right }
           height: visible ? root.sectionLabelHeight : 0
 
@@ -1467,6 +1892,10 @@ Item {
 
             readonly property string section: GridView.view ? GridView.view.section : "all"
             readonly property bool selected: root.selectedSection === tile.section && root.selectedIndex === tile.index
+            // A folder is navigation and a toggle is a switch; neither is a
+            // thing you launch, and neither has ever been in the top row.
+            readonly property bool pinnable: Favorites.pinnable(tile.modelData.kind)
+            readonly property bool pinned: root.isFavorite(tile.modelData.id)
 
             width: root.cellWidth
             height: root.cellHeight
@@ -1480,7 +1909,11 @@ Item {
               border.color: Style.selectedBorderColor
             }
 
+            // Above the tile's own MouseArea so the star's click target wins.
+            // Everything else in here is inert — an image and two labels — so
+            // clicks anywhere but the star still fall through to it.
             Column {
+              z: 1
               anchors.centerIn: parent
               spacing: Style.spacing.sm
 
@@ -1544,11 +1977,13 @@ Item {
                 }
 
                 // "Just added": this .desktop file appeared since the last
-                // time the grid was closed.
+                // time the grid was closed. It sits in the left corner because
+                // the star took the right one — this badge clears itself the
+                // next time the launcher closes, and a pin does not.
                 Rectangle {
                   visible: tile.modelData.isNew === true
-                  anchors { right: parent.right; top: parent.top }
-                  anchors.rightMargin: -Style.space(2)
+                  anchors { left: parent.left; top: parent.top }
+                  anchors.leftMargin: -Style.space(2)
                   anchors.topMargin: -Style.space(2)
                   width: Style.space(9)
                   height: width
@@ -1556,6 +1991,39 @@ Item {
                   color: root.accent
                   border.width: Math.max(1, Style.space(1))
                   border.color: root.background
+                }
+
+                // The pin marker: hollow while the pointer is over the tile,
+                // filled once pinned and then drawn whether or not it is — what
+                // you pinned should be readable without sweeping the pointer
+                // across the grid to find out.
+                //
+                // A Nerd Font glyph, the same way the System rows draw theirs;
+                // the shared menu font is one by default. Hidden while
+                // searching, when the grid is a list of results rather than a
+                // place you arrange things.
+                Text {
+                  visible: tile.pinnable && !root.searching && (hover.hovered || tile.pinned)
+                  anchors { right: parent.right; top: parent.top }
+                  anchors.rightMargin: -Style.space(3)
+                  anchors.topMargin: -Style.space(3)
+                  text: tile.pinned ? "\uf005" : "\uf006"
+                  color: tile.pinned ? root.accent : root.foreground
+                  opacity: tile.pinned ? 1 : (pinArea.containsMouse ? 0.95 : 0.5)
+                  font.family: root.fontFamily
+                  font.pixelSize: Math.round(root.iconSize * 0.3)
+
+                  // Its own target, and it keeps the click: pinning something
+                  // is not a reason to launch it. Right-click is left alone, so
+                  // the context menu still opens over the star.
+                  MouseArea {
+                    id: pinArea
+                    anchors.fill: parent
+                    anchors.margins: -Style.space(4)
+                    hoverEnabled: true
+                    acceptedButtons: Qt.LeftButton
+                    onClicked: root.toggleFavorite(tile.modelData)
+                  }
                 }
               }
 
@@ -1864,7 +2332,10 @@ Item {
               return
             }
             if (target.kind === "command") {
-              var commandEntries = [{ label: "Run " + target.name, kind: "launch", action: null }]
+              var commandEntries = [
+                { label: "Run " + target.name, kind: "launch", action: null },
+                contextMenu.favoriteEntry(target)
+              ]
               if (root.usage[target.id])
                 commandEntries.push({ label: "Reset usage ranking", kind: "reset", action: null })
               contextMenu.items = commandEntries
@@ -1878,7 +2349,9 @@ Item {
             if (target.kind === "agent") {
               if (root.defaultAgent !== target.agentId)
                 entries.push({ label: "Set as default agent", kind: "default-agent", action: null })
-              if (root.usage[target.id]) entries.push({ label: "Reset usage ranking", kind: "reset", action: null })
+              entries.push(contextMenu.favoriteEntry(target))
+              if (root.usage[target.id])
+                entries.push({ label: "Reset usage ranking", kind: "reset", action: null })
               contextMenu.items = entries
               return
             }
@@ -1886,9 +2359,22 @@ Item {
             var actions = root.actionsFor(target)
             for (var i = 0; i < actions.length; i++)
               entries.push({ label: String(actions[i].name || "Action"), kind: "action", action: actions[i] })
-            if (root.usage[target.id]) entries.push({ label: "Reset usage ranking", kind: "reset", action: null })
+            entries.push(contextMenu.favoriteEntry(target))
+            if (root.usage[target.id])
+              entries.push({ label: "Reset usage ranking", kind: "reset", action: null })
             entries.push({ label: "Remove from launcher…", kind: "remove", action: null })
             contextMenu.items = entries
+          }
+
+          // The star is the fast way to pin something; this is the discoverable
+          // one, and the only one a keyboard can reach — the Menu key opens
+          // this over whatever is selected. Pinning and frecency are separate
+          // tabs now, so a row can offer both actions at once: pin it to the
+          // shelf, or disown its score in the ranking.
+          function favoriteEntry(target) {
+            return root.isFavorite(target.id)
+              ? { label: "Remove from favorites", kind: "unfavorite", action: null }
+              : { label: "Add to favorites", kind: "favorite", action: null }
           }
 
           function run(item) {
@@ -1898,6 +2384,7 @@ Item {
             if (item.kind === "launch") root.launch(target)
             else if (item.kind === "action") root.launchAction(target, item.action)
             else if (item.kind === "default-agent") root.setDefaultAgent(target)
+            else if (item.kind === "favorite" || item.kind === "unfavorite") root.toggleFavorite(target)
             else if (item.kind === "reset") root.resetUsage(target)
             else if (item.kind === "remove") root.removeEntry(target)
           }
@@ -1953,12 +2440,16 @@ Item {
     }
   }
 
+  onFavoriteRowsChanged: if (!root.interacted) root.resetSelection()
   onFrequentRowsChanged: if (!root.interacted) root.resetSelection()
 
-  // Keep the keyboard selection inside the visible rows of the all-apps grid.
+  // Keep the keyboard selection inside the visible rows of the grids that can
+  // scroll. Favorites is one of them now: pin enough and it runs out of room.
   function revealSelection() {
     if (root.selectedSection === "all") allGrid.positionViewAtIndex(root.selectedIndex, GridView.Contain)
     else if (root.selectedSection === "system") systemGrid.positionViewAtIndex(root.selectedIndex, GridView.Contain)
+    else if (root.selectedSection === "favorites") favoritesGrid.positionViewAtIndex(root.selectedIndex, GridView.Contain)
+    else if (root.selectedSection === "frequent") frequentGrid.positionViewAtIndex(root.selectedIndex, GridView.Contain)
   }
 
   onSelectedIndexChanged: root.revealSelection()

@@ -23,7 +23,7 @@ in a menu tree it lives. Rows describe the machine they are on: options your
 hardware or setup cannot support are hidden, and the default you are already
 running carries a ✓.
 
-![The App Launcher: a Frequently used row, an alphabetical grid of applications and coding agents, and a System strip of menu folders pinned below](preview.png)
+![The App Launcher: a tabbed Favorites / Frequently used section, an alphabetical grid of applications and coding agents, and a System strip of menu folders pinned below](preview.png)
 
 **Requirements:** Omarchy 4.x with `omarchy-shell` (Quickshell 0.3+). The
 configuration wizards additionally need `gum` and `python3`, both of which ship
@@ -81,7 +81,7 @@ window where you left it.
 | Key | Action |
 |---|---|
 | any character | filter as you type (name, generic name, comment, keywords, acronym) |
-| `↑` `↓` `←` `→` | move the selection; up/down crosses between the toggle rows, the grids and the System strip, keeping your column |
+| `↑` `↓` `←` `→` | move the selection; up/down crosses between the toggle rows, the grids and the System strip, keeping your column. In the tabbed section, `←` off the first tile or `→` off the last crosses to the other tab |
 | `Home` / `End` | first tile / last tile |
 | `Enter` | launch the selection — open it on a System folder, flip it on a toggle |
 | `Menu` | context menu for the selection |
@@ -92,8 +92,19 @@ window where you left it.
 
 Click a tile to launch it. Hovering moves the selection. Right-click opens the
 context menu: an app offers its `.desktop` actions (Chrome's *New Incognito
-Window*, a terminal's *New Window*, …), *Reset usage ranking*, and *Remove from
-launcher…*; an agent offers *Set as default agent* instead.
+Window*, a terminal's *New Window*, …), *Add to favorites*, *Reset usage
+ranking* once it has a score, and *Remove from launcher…*; an agent offers *Set
+as default agent* as well.
+
+Hovering a tile also shows a hollow star in its top corner. Click the star to
+pin that app to *Favorites*; click a filled one to unpin it. The star takes the
+click on its own, so pinning something does not also launch it. Stars are hidden
+while you are typing, since a list of search results is not a place you arrange
+things. They appear on every grid, *Frequently used* included — the app you open
+most is the one you are most likely to want pinned.
+
+Click either tab title to switch to it; clicking one while the section is folded
+away opens it on that tab. The chevron above the titles folds it.
 
 Click a toggle to flip it. The launcher stays open, so a switch behaves like a
 switch rather than a menu item, and the pill updates in place once the change
@@ -145,11 +156,34 @@ launcher reads each one itself: a flag file, a Hyprland flag file, a status
 script, or a shell IPC call depending on the toggle. All of it is answered by
 one batched shell pass per summon.
 
-**Frequently used** — one row, most-launched first, containing only things you
-have actually launched. Each launch adds 1 to a score that halves every two
-weeks, so a daily driver holds its place without pinning while last month's
-one-off drifts out. On a fresh install the section is absent entirely rather
-than filled with a guess.
+**Favorites / Frequently used** — one section with two tabs, their titles
+parked at opposite ends of the same line. Clicking a title slides the tiles
+across underneath them; the underline travels with them. `←` and `→` do it from
+the keyboard: the two tabs behave as one continuous run of tiles, so walking off
+either end crosses to the other rather than stopping dead. Whichever tab you
+were last on is remembered.
+
+*Favorites* is the things you pinned, in the order you pinned them, and only
+those. A pin stays exactly where you put it: nothing is promoted or demoted
+behind your back, which is the point of pinning rather than ranking. Apps,
+coding agents and system menu commands can all be pinned. There is no limit —
+the tab grows to as many rows as it needs, and once one row of applications is
+all that would be left it scrolls instead of growing further. With nothing
+pinned it shows you how to pin something rather than disappearing.
+
+*Frequently used* is the older half: what you actually launch, ranked by a
+frecency score that halves every two weeks, one row wide. It is a readout, not a
+shelf — an app you have pinned still appears here if you launch it often, because
+a tab that edited itself to avoid repeating a tile would be lying about what you
+use.
+
+The chevron above the titles folds the whole section away and hands its rows to
+the applications below. That lasts as long as the shell does and is not
+remembered across a restart: collapsing is a "give me more applications right
+now", not a preference.
+
+Switching tabs and collapsing both leave the card exactly the same height. The
+rows one gives up, the other takes.
 
 **All apps** — everything else alphabetically, in a scrolling grid with a
 draggable scroll bar. The viewport snaps to whole rows, so the bottom row is
@@ -164,8 +198,8 @@ Install, Remove, Update, About, Power) drill in place; a `›` marks the ones th
 open rather than run. Typing collapses the tree instead of filtering one folder,
 because search beats navigation once you know the word — the strip then lists
 ranked matches from every leaf, labelled with the folder each came from. Rows
-run the same command the menu would, and earn frecency like applications, so one
-you use daily can climb into *Frequently used*.
+run the same command the menu would, and can be pinned like applications, so one
+you use daily can sit in *Favorites*.
 
 Menu rows carry conditions, and they are honoured: `Hibernate` is absent where
 it is unavailable, *Stop Screenrecording* only while recording, and a folder
@@ -194,6 +228,7 @@ Everything lives under **Omarchy menu › Setup › App Launcher**, also reachab
 | Add Coding Agent | Guided prompts that add a CLI agent to `agents.json` |
 | Remove Coding Agent | Picks from the agents you added; built-ins are not editable here |
 | Edit Agents File | Opens `agents.json` in `$EDITOR` for hand-tuning flags |
+| Reset Favorites | Empties `favorites.json`, unpinning everything |
 | Reset Usage Ranking | Deletes `usage.json`, emptying *Frequently used* |
 
 The wizards live in this plugin's `bin/` and run fine on their own:
@@ -239,7 +274,7 @@ Omarchy's agent roster is a fixed list, so anything else goes in:
 
 | Field | Meaning |
 |---|---|
-| `id` | Required. Names the frecency key (`agent:<id>`). Letters, digits, `.`, `_`, `-`. |
+| `id` | Required. Names the state key (`agent:<id>`). Letters, digits, `.`, `_`, `-`. |
 | `name` | Shown on the tile. Defaults to the id. |
 | `command` | argv to run. `command[0]` is the binary probed with `command -v` — an agent that isn't installed simply doesn't appear. Defaults to `[id]`. |
 | `monogram` | One or two characters for the tile. Derived from the name if omitted. |
@@ -283,22 +318,41 @@ installed since the last open just shows up.
 
 ## State
 
-Two files, both safe to delete — deleting `seen.json` re-baselines the badges,
-deleting `usage.json` empties *Frequently used*:
+Three files:
 
 ```
-~/.local/state/omarchy/app-launcher/usage.json   # frecency scores (agents "agent:<id>", menu rows "cmd:<menu id>")
-~/.local/state/omarchy/app-launcher/seen.json    # desktop ids seen at last close
+~/.local/state/omarchy/app-launcher/favorites.json  # pinned ids, in pin order
+~/.local/state/omarchy/app-launcher/usage.json      # launch counts (agents "agent:<id>", menu rows "cmd:<menu id>")
+~/.local/state/omarchy/app-launcher/seen.json       # desktop ids seen at last close
+~/.local/state/omarchy/app-launcher/view.json       # which tab was open last
 ```
 
-Both survive reboots and logout/login: scores are written on every launch, not on
-exit, and atomically (temp file + rename), so an interrupted write cannot corrupt
-them. Scores for apps that no longer exist are pruned when the launcher closes;
-menu rows count as live for that purpose, and if the menu failed to load they are
-kept rather than pruned, so a bad read cannot cost you their ranking.
+All four survive reboots and logout/login. They are written as things happen —
+a pin on the click, a launch on the launch — not on exit, and atomically (temp
+file + rename), so an interrupted write cannot corrupt them. Ids for apps that no
+longer exist are pruned when the launcher closes; menu rows count as live for
+that purpose, and if the menu failed to load they are kept rather than pruned, so
+a bad read cannot cost you a pin. Temporarily hidden menu commands stay pinned.
+An unavailable or empty app list, an unfinished agent probe, or an unreadable menu
+source preserves the affected pins until the inventory can be checked again.
 
-To reset by hand, **close the launcher first** — a live instance rewrites
-`usage.json` from memory when it closes.
+To empty *Favorites*, write it an empty list:
+
+```bash
+echo '{"version":1,"ids":[]}' > ~/.local/state/omarchy/app-launcher/favorites.json
+```
+
+Deleting the file does the same thing — it starts empty either way.
+
+To empty *Frequently used*, delete `usage.json`. Both resets are in the Omarchy
+menu under *Setup → App Launcher* as well.
+
+`view.json` holds one field, the tab you were last on. Delete it and the
+launcher opens on *Favorites*. There is deliberately nothing in it about the
+collapsed state.
+
+To edit any of these by hand, **close the launcher first** — a live instance
+rewrites them from memory when it closes.
 
 ---
 
@@ -316,7 +370,7 @@ It deliberately leaves four things behind, none of which break anything:
 
 | Left behind | Why, and how to clear it |
 |---|---|
-| `~/.local/state/omarchy/app-launcher/` | Your rankings and badge baseline, so reinstalling picks up where you left off. `rm -rf` it to forget. |
+| `~/.local/state/omarchy/app-launcher/` | Your pins, launch counts and badge baseline, so reinstalling picks up where you left off. `rm -rf` it to forget. |
 | `~/.config/omarchy/app-launcher/agents.json` | Your custom agents, same reason. |
 | The `SUPER+A` binding | A plugin cannot edit your `bindings.lua`. Left in place it is a no-op that logs `summon: unknown plugin`. Delete the line to be tidy. |
 | The Setup menu rows | Same reason. Left in place they point at missing scripts; delete the `setup.applauncher.*` block. |
@@ -393,7 +447,9 @@ time it opens, so reopen it. If it persists, the package shipped no themed icon.
 ```
 manifest.json   plugin id, kinds (overlay + bar-widget), entry points
 AppGrid.qml     the overlay: state, IO, layout, keyboard, context menu
-Usage.js        frecency arithmetic and state (de)serialization
+Favorites.js    the pin list: order, resolution, pruning, (de)serialization,
+                and which tab the section is showing
+Usage.js        launch counting and state (de)serialization
 Agents.js       the coding-agent roster, launch argv, custom roster parsing
 Menu.js         the Omarchy menu: JSONC parsing, folder tree, guard batching
 Toggles.js      the toggle table, its batched state read, and row building
@@ -414,7 +470,14 @@ omarchy plugin list | grep app-launcher
 ```
 
 The overlay deliberately does **not** set `keepLoaded`, so it is built fresh on
-each summon and reads its state files each time.
+each summon and reads its state files each time. The small `SessionState.js`
+library keeps only the collapse preference in memory across those instances;
+a shell restart resets it. A delayed `view.json` read cannot override a tab or
+keyboard selection you have already made.
+
+Run `node --test tests/*.test.cjs` for the regression suite. Node is needed only
+for tests. The Qt tests also need `qs` and run isolated offscreen fixtures; they
+do not load the launcher or touch your saved state.
 
 ---
 
@@ -433,8 +496,8 @@ collide in someone's `~/.config/omarchy/plugins/`. Every reference:
 | `~/.config/omarchy/shell.json` | the bar layout entry (or re-enable the plugin) |
 | `AppGrid.qml` | `WlrLayershell.namespace`, if you write layer rules against it |
 
-Changing `stateDir` or `agentConfigPath` moves your frecency data and custom
-agents; leaving them alone keeps both across a rename.
+Changing `stateDir` or `agentConfigPath` moves your pins and custom agents;
+leaving them alone keeps both across a rename.
 
 ## License
 
