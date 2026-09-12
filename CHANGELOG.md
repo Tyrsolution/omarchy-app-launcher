@@ -16,13 +16,69 @@ Changes are grouped under `Added`, `Changed`, `Fixed`, `Removed`, `Deprecated`, 
 
 ## [Unreleased]
 
+### Added
+
+- A **Favorites** tab, pinned by hand, sharing the top section with the
+  existing **Frequently used** row. Hovering a tile shows a hollow star in its
+  corner; clicking it pins that tile, and clicking a filled star unpins it. The
+  star is its own click target, so pinning something does not also launch it,
+  and it is drawn whether or not the tile is hovered once pinned, so what you
+  pinned is readable without sweeping the pointer across the grid. The context
+  menu carries *Add to favorites* / *Remove from favorites* as well, which is
+  what a keyboard reaches through the Menu key.
+- Pins keep the order you made them in and are not limited in number. The tab
+  grows to as many rows as it needs, and once one row of applications is all
+  that would be left, it scrolls rather than growing further.
+- The two sections are **tabs in one slot** rather than one above the other,
+  with their titles at opposite ends of the same line. Clicking a title slides
+  the tiles across underneath them and the underline travels with them; `←` off
+  the first tile or `→` off the last does the same from the keyboard, so the two
+  tabs read as one continuous run rather than two stops. Stacking them would
+  have cost the applications a row of height for a section you are not looking
+  at; this way switching costs nothing, because the rows one tab gives up the
+  other takes.
+- A **collapse control** above the titles, folding the whole section away and
+  handing its rows to the applications. It sits in the gap rather than on the
+  title line — that line's right-hand end belongs to *Frequently used* — and it
+  does not move between open and shut, so it is never chasing the pointer that
+  just clicked it. Clicking either title while folded opens the section on that
+  tab.
+- `favorites.json`, beside the existing state files, holding the pinned ids as
+  an ordered array. Written on the click, atomically, and pruned on close like
+  the scores are.
+- `view.json`, holding which tab was open last. Its own file so `favorites.json`
+  stays a list of ids and nothing else. The collapsed state is deliberately not
+  in it: collapsing is a "give me more applications right now" rather than a
+  preference, so it lasts as long as the shell does.
+- A *Reset Favorites* row in the Setup menu, beside the existing *Reset Usage
+  Ranking*. Two tabs, two resets: one empties `favorites.json`, the other
+  deletes `usage.json`. The per-row *Reset usage ranking* stays in the context
+  menu and is now joined there by the pin actions, since a row can belong to
+  both tabs at once.
+- Stars on every grid, *Frequently used* included. The app you open most is the
+  one you are most likely to want pinned, so it should be pinnable where you are
+  already looking at it.
+- An empty *Favorites* tab says how to fill it rather than disappearing. A
+  section that only appears once you have already found the feature teaches
+  nobody. *Frequently used* says the same for a fresh install that has launched
+  nothing yet.
+
 ### Changed
 
+- The "just added" badge moved to the tile's left corner, because the star took
+  the right one. The badge clears itself the next time the launcher closes; a
+  pin does not, so the pin gets the corner that is easier to see.
+- The card height sum is split in two, so the section's grid can be sized from
+  everything else without the two deriving from each other. There is no limit on
+  how much you can pin, so the rows it gets are whatever is left over.
+- A pinned application still appears in *Frequently used* when you launch it
+  often. That tab is a readout of what you actually use, and editing it to avoid
+  repeating a tile would make it lie.
 - The project description now says what the launcher became rather than what it
-  shipped as. The old wording — an icon grid with frecency and agents — predated
-  the System section and the toggles, and read as a feature list. Updated in all
-  three places it lives: the GitHub About, `manifest.json` (which is what the
-  plugin marketplace lists you by), and the README's opening line.
+  shipped as. The old wording — an icon grid with frecency and agents —
+  predated the System section and the toggles, and read as a feature list.
+  Updated in all three places it lives: the GitHub About, `manifest.json` (which
+  is what the plugin marketplace lists you by), and the README's opening line.
 
 ## [0.4.0] - 2026-09-03
 
