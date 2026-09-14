@@ -14,7 +14,7 @@ tag the part that actually reaches anyone.
 Changes are grouped under `Added`, `Changed`, `Fixed`, `Removed`, `Deprecated`, and
 `Security`. Merged pull requests are credited inline with their number and author.
 
-## [Unreleased]
+## [0.4.1] - 2026-09-14
 
 ### Changed
 
@@ -23,6 +23,26 @@ Changes are grouped under `Added`, `Changed`, `Fixed`, `Removed`, `Deprecated`, 
   the System section and the toggles, and read as a feature list. Updated in all
   three places it lives: the GitHub About, `manifest.json` (which is what the
   plugin marketplace lists you by), and the README's opening line.
+
+### Fixed
+
+- The launcher showed zero installed applications — only the System menu strip
+  and coding-agent tiles rendered. Omarchy's plugin-hardening commit `1702cf0b`
+  ("Restrict third-party shell plugin capabilities", 2026-09-01) gates
+  `shell.appLibrary` behind a `"menu"` manifest kind (`shell/shell.qml:595`),
+  which this plugin's `kinds: ["overlay", "bar-widget"]` does not declare, so
+  `shell.appLibrary` became permanently `null` and `AppGrid.qml`'s `rebuild()`
+  bailed out before building any app rows. The app list, search, launch, icon
+  resolution, hidden-entry filtering, live reflow, and "Remove from launcher…"
+  now read directly off Quickshell's own `DesktopEntries` singleton instead of
+  the gated `shell.appLibrary` facade — a core Quickshell engine service the
+  manifest-kind restriction never gated in the first place.
+
+### Security
+
+- `launch()` and `removeEntry()` now build their commands as argv arrays
+  (`Util.execArgv`) instead of interpolating into a shell string, closing off
+  shell-metacharacter mis-tokenization from a desktop-entry id or display name.
 
 ## [0.4.0] - 2026-09-03
 
