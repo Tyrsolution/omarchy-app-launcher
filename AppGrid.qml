@@ -8,14 +8,22 @@ import "Usage.js" as Usage
 import "Agents.js" as Agents
 import "Menu.js" as Menu
 import "Toggles.js" as Toggles
+import "AppSearch.js" as AppSearch
 
 // A centered launcher: a "Frequently used" row on top, then every installed
 // application and coding agent below, alphabetical and scrollable.
 //
-// The app list itself is not ours: the shell's AppLibrary already watches
-// DesktopEntries, filters hidden/NoDisplay entries, resolves icon names to
-// files (re-indexing after an install), and launches under app-graphical.slice.
-// This plugin owns presentation, frecency ordering, and the "just added" badge.
+// The app list is read directly off Quickshell's DesktopEntries singleton,
+// not the shell's AppLibrary service: Omarchy's plugin-hardening pass
+// (commit 1702cf0b, "Restrict third-party shell plugin capabilities")
+// gates shell.appLibrary behind a "menu" manifest kind this plugin does not
+// declare (and should not fake -- see CHANGELOG), so shell.appLibrary is
+// always null here. DesktopEntries is a core Quickshell engine singleton and
+// is not gated. AppSearch.js is vendored from Omarchy's own
+// shell/services/AppSearch.js so ranking/interleaving stays identical to
+// what AppLibrary produced. This plugin now owns presentation, frecency
+// ordering, hidden-entry filtering, icon resolution, launch, remove, and the
+// "just added" badge end to end.
 Item {
   id: root
 
@@ -24,7 +32,8 @@ Item {
   property var shell: null
   property var manifest: null
 
-  readonly property var appLibrary: root.shell ? root.shell.appLibrary : null
+  property var configuredHiddenEntryIds: ({})
+  property var desktopHiddenEntryIds: ({})
   readonly property string pluginId: (root.manifest && root.manifest.id) || "tyrsolution.app-launcher"
   readonly property string stateDir: Quickshell.env("HOME") + "/.local/state/omarchy/app-launcher"
 
@@ -222,9 +231,6 @@ Item {
     contextMenu.hide()
     root.opened = true
 
-    // Icons for packages installed since the shell started may not be in Qt's
-    // theme cache yet; AppLibrary rescans on demand.
-    if (root.appLibrary) root.appLibrary.refreshIcons()
     // Re-probe the agent roster on every summon, so an agent installed since
     // the last open shows up without a shell restart.
     root.probeAgents()
@@ -269,12 +275,77 @@ Item {
 
   // ------------------------------------------------------------ app list
 
+  function normalizeDesktopId(id) {
+    var value = String(id || "").trim()
+    if (value.slice(-8) === ".desktop") value = value.slice(0, -8)
+    return value
+  }
+
+  function isHiddenEntry(entry) {
+    var id = String((entry && entry.id) || "")
+    return root.configuredHiddenEntryIds[id] === true || root.desktopHiddenEntryIds[id] === true
+  }
+
+  // Replaces root.appLibrary.sortedEntries(query): same ranking algorithm
+  // (AppSearch.js, vendored from the shell), sourced straight from the
+  // DesktopEntries engine singleton instead of the gated AppLibrary wrapper.
+  function catalogEntries(query) {
+    var values = (DesktopEntries.applications && DesktopEntries.applications.values) || []
+    return AppSearch.sortedEntries(values, query, root.isHiddenEntry)
+  }
+
+  // Replaces root.appLibrary.iconSource(icon). Deliberately skips
+  // AppLibrary's own on-disk icon-name index (a freshness workaround for
+  // apps installed in the current session, not a correctness fix) --
+  // Quickshell.iconPath already does themed, XDG-aware lookup for anything
+  // already indexed by the desktop's icon theme.
+  function iconSourceFor(icon) {
+    var value = String(icon || "")
+    if (value.length === 0) return Quickshell.iconPath("application-x-executable", true)
+    if (value.indexOf("file://") === 0 || value.indexOf("image://") === 0) return value
+    if (value.charAt(0) === "/") return Util.fileUrl(value)
+    var themed = Quickshell.iconPath(value, true)
+    if (themed.length > 0) return themed
+    return Quickshell.iconPath("application-x-executable", true)
+  }
+
+  function loadConfiguredHides(rawText) {
+    var next = ({})
+    var lines = String(rawText || "").split(/\n/)
+    for (var i = 0; i < lines.length; i++) {
+      var id = root.normalizeDesktopId(lines[i])
+      if (id.length > 0) next[id] = true
+    }
+    root.configuredHiddenEntryIds = next
+    root.refreshNewIds()
+    root.rebuild()
+  }
+
+  function loadDesktopHiddenEntries(rawText) {
+    var next = ({})
+    var lines = String(rawText || "").split(/\n/)
+    for (var i = 0; i < lines.length; i++) {
+      var id = root.normalizeDesktopId(lines[i])
+      if (id.length > 0) next[id] = true
+    }
+    root.desktopHiddenEntryIds = next
+    root.refreshNewIds()
+    root.rebuild()
+  }
+
+  function hiddenEntryScanCommand() {
+    var desktop = [Quickshell.env("XDG_CURRENT_DESKTOP"), Quickshell.env("XDG_SESSION_DESKTOP"), Quickshell.env("DESKTOP_SESSION")]
+      .filter(function(v) { return String(v || "").length > 0 })
+      .join(":")
+    var script = root.omarchyPath + "/shell/services/hidden-entries.sh"
+    return Util.shellQuote(script) + " " + Util.shellQuote(desktop)
+  }
+
   function liveIdMap() {
     var out = ({})
     for (var a = 0; a < root.installedAgents.length; a++)
       out[Agents.rowId(String(root.installedAgents[a]))] = true
-    if (!root.appLibrary) return out
-    var rows = root.appLibrary.sortedEntries("")
+    var rows = root.catalogEntries("")
     for (var i = 0; i < rows.length; i++) {
       var id = String((rows[i].entry && rows[i].entry.id) || "")
       if (id) out[id] = true
@@ -283,11 +354,11 @@ Item {
   }
 
   function rebuild() {
-    if (!root.appLibrary) { root.allRows = []; root.frequentPool = []; return }
-    // sortedEntries returns search rows ({ entry, score, key, name }), not the
-    // DesktopEntry itself — the entry is one level down. With no query it is
-    // already alphabetical; with one it is ranked by the shell's fuzzy matcher.
-    var matches = root.appLibrary.sortedEntries(root.filterText)
+    // catalogEntries returns search rows ({ entry, score, key, name }), not
+    // the DesktopEntry itself — the entry is one level down. With no query
+    // it is already alphabetical; with one it is ranked by AppSearch's
+    // fuzzy matcher (the same one the shell's own AppLibrary uses).
+    var matches = root.catalogEntries(root.filterText)
     var now = Date.now()
     var out = []
     for (var i = 0; i < matches.length; i++) {
@@ -297,8 +368,8 @@ Item {
       out.push({
         id: id,
         kind: "app",
-        name: root.appLibrary.entryName(entry),
-        subtext: root.appLibrary.entrySubtext(entry),
+        name: AppSearch.entryName(entry),
+        subtext: AppSearch.entrySubtext(entry),
         icon: String(entry.icon || ""),
         iconUrl: "",
         monogram: "",
@@ -620,7 +691,7 @@ Item {
     root.usage = Usage.record(root.usage, row.id, Date.now())
     root.persistUsage()
     root.dismiss()
-    if (root.appLibrary) root.appLibrary.launch(row.id, row.name)
+    Util.execArgv(["uwsm-app", "--", "gtk-launch", row.id + ".desktop"])
   }
 
   // Agents are CLIs, so they go into a terminal through omarchy-launch-tui with
@@ -724,7 +795,7 @@ Item {
   function removeEntry(row) {
     if (!row) return
     root.dismiss()
-    if (root.appLibrary) root.appLibrary.remove(row.id, row.name)
+    Util.execArgv([root.omarchyPath + "/bin/omarchy-remove-launcher-entry", row.id, String(row.name || row.id)])
   }
 
   function resetUsage(row) {
@@ -778,7 +849,29 @@ Item {
     usageFile.setText(Usage.serializeUsage(root.usage))
   }
 
-  Component.onCompleted: Util.execDetached("mkdir -p " + Util.shellQuote(root.stateDir))
+  Component.onCompleted: {
+    Util.execDetached("mkdir -p " + Util.shellQuote(root.stateDir))
+    hiddenEntryScan.running = true
+  }
+
+  FileView {
+    id: launcherHidesFile
+    path: root.omarchyPath + "/default/omarchy/launcher.hides"
+    watchChanges: true
+    printErrors: false
+    onLoaded: root.loadConfiguredHides(text())
+    onFileChanged: reload()
+    onLoadFailed: root.loadConfiguredHides("")
+  }
+
+  Process {
+    id: hiddenEntryScan
+    command: ["bash", "-c", root.hiddenEntryScanCommand()]
+    property string collected: ""
+    stdout: SplitParser { onRead: function(line) { hiddenEntryScan.collected += line + "\n" } }
+    onStarted: hiddenEntryScan.collected = ""
+    onExited: root.loadDesktopHiddenEntries(hiddenEntryScan.collected)
+  }
 
   // Non-login shell on purpose: the shell's PATH already carries the mise
   // shims, and sourcing the profile would touch ~/.local/share, which the
@@ -928,8 +1021,9 @@ Item {
   // The app set changed under us — a package landed, a web app was added, an
   // entry was removed. Reflow immediately; that is the whole point.
   Connections {
-    target: root.appLibrary
-    function onAppsChanged() {
+    target: DesktopEntries.applications
+    function onValuesChanged() {
+      hiddenEntryScan.running = true
       root.refreshNewIds()
       root.rebuild()
     }
@@ -1494,7 +1588,7 @@ Item {
                   visible: !monogram.visible
                   source: tile.modelData.iconUrl
                     ? tile.modelData.iconUrl
-                    : (root.appLibrary ? root.appLibrary.iconSource(tile.modelData.icon) : "")
+                    : root.iconSourceFor(tile.modelData.icon)
                   sourceSize.width: root.iconSize * 2
                   sourceSize.height: root.iconSize * 2
                   fillMode: Image.PreserveAspectFit

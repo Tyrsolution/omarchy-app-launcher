@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "tyrsolution.app-launcher",
   "name": "App Launcher",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "author": "Tyrsolution",
   "license": "MIT",
   "description": "One overlay for Omarchy: launch apps and coding agents, browse the system menu as folders, and flip the switches you reach for most",

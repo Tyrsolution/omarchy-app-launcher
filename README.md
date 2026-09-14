@@ -6,8 +6,8 @@ most.
 
 It runs as an `overlay` plugin inside `omarchy-shell` (Quickshell), so summoning
 it is an IPC call into a process that is already running — not a cold start. The
-app list comes from the shell's shared `AppLibrary`, so installing or removing an
-application updates the grid live, with no polling and no restart.
+app list is read straight off Quickshell's `DesktopEntries`, so installing or
+removing an application updates the grid live, with no polling and no restart.
 
 Coding agents (Claude Code, Codex, Gemini, …) appear alongside applications and
 launch into a terminal.
