@@ -24,6 +24,13 @@ Changes are grouped under `Added`, `Changed`, `Fixed`, `Removed`, `Deprecated`, 
   three places it lives: the GitHub About, `manifest.json` (which is what the
   plugin marketplace lists you by), and the README's opening line.
 
+### Fixed
+
+- Hosted in a dock slot (e.g. `rosakodu.dock`), the launcher showed a generic gear
+  instead of its own grid icon. Hosts that draw a widget themselves read `icon` from
+  the widget, and the glyph only lived on the inner `BarIconButton`. The widget now
+  exposes it as `icon`. The bar button is unchanged.
+
 ## [0.4.0] - 2026-09-03
 
 ### Added

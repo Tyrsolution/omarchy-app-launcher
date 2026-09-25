@@ -8,6 +8,11 @@ BarWidget {
   id: root
   moduleName: "tyrsolution.app-launcher"
 
+  // Hosts that draw this widget themselves (e.g. a dock slot) look for an
+  // `icon` on the widget, not on the inner button, and fall back to a
+  // generic gear without it.
+  readonly property string icon: button.text
+
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
